@@ -172,7 +172,7 @@ def extract_code(username):
     if not isinstance(username, str) or not username.strip():
         return None
     raw = username.strip().upper()
-    # Correction spécifique demandée : forcer le code 60DDE0 pour les variantes liées à Yapo
+    # Forcer l'extraction du code 60DDE0 pour toute variante contenant 60DDE0 (ex: YAPO/60DDEO)
     if "60DDE0" in raw:
         return "60DDE0"
     parts = [p.strip() for p in re.split(r"[/\-\s]+", raw) if p.strip()]
@@ -192,8 +192,9 @@ if not enr_df.empty:
     enr_df["code_parrainage"] = enr_df["code_parrainage"].astype(str).str.strip().str.upper()
     enr_df["role"] = enr_df["role"].fillna("")
     
-    # Correction manuelle / forcée dans le référentiel des superviseurs selon les consignes
-    # Superviseurs par zone : Yamoussoukro (Koffi Ange Mickael), Daloa (Koukougnon Euloge), Abengourou (Berthe Mafine Chata), San-Pédro (Bosson Kasi Jacques)
+    # -------------------------------------------------------------------------
+    # APPLICATION DES MISES À JOUR DES SUPERVISEURS PAR ZONE
+    # -------------------------------------------------------------------------
     supervisor_overrides = {
         "KOFFI ANGE MICKAEL": {"role": "superviseur", "ville": "Yamoussoukro", "equipe": "Yamoussoukro"},
         "KOUKOUGNON EULOGE": {"role": "superviseur", "ville": "Daloa", "equipe": "Daloa"},
@@ -228,7 +229,9 @@ else:
     df["equipe"] = "Non assignée"
     df["nom_prenoms"] = df["_username_brut"]
 
-# Correction spécifique pour s'assurer que le code 60DDE0 (Yapo Ayekoe Bienvenue) est bien rattaché
+# -------------------------------------------------------------------------
+# ASSOCIATION FORCÉE DU CODE 60DDE0 (YAPO AYEKOE BIENVENUE)
+# -------------------------------------------------------------------------
 mask_yapo = df["code_agent"] == "60DDE0"
 if mask_yapo.any():
     df.loc[mask_yapo, "nom_prenoms"] = "YAPO AYEKOE BIENVENUE"
