@@ -1,4 +1,4 @@
-﻿"""
+"""
 Vue Superviseur — version simplifiée du dashboard, verrouillée sur "Aujourd'hui".
 Pas de filtre ville/équipe/opérateur/période : juste ce qui se passe AUJOURD'HUI,
 pour que chaque superviseur voie l'activité de son équipe en direct, sans manipulation.
@@ -172,6 +172,9 @@ def extract_code(username):
     if not isinstance(username, str) or not username.strip():
         return None
     raw = username.strip().upper()
+    # Correction spécifique demandée : forcer le code 60DDE0 pour les variantes liées à Yapo
+    if "60DDE0" in raw:
+        return "60DDE0"
     parts = [p.strip() for p in re.split(r"[/\-\s]+", raw) if p.strip()]
     candidates = [p for p in parts if CODE_PATTERN.match(p)]
     if candidates:
@@ -188,6 +191,22 @@ ROLE_SUPERVISEUR_KW = "superviseur"
 if not enr_df.empty:
     enr_df["code_parrainage"] = enr_df["code_parrainage"].astype(str).str.strip().str.upper()
     enr_df["role"] = enr_df["role"].fillna("")
+    
+    # Correction manuelle / forcée dans le référentiel des superviseurs selon les consignes
+    # Superviseurs par zone : Yamoussoukro (Koffi Ange Mickael), Daloa (Koukougnon Euloge), Abengourou (Berthe Mafine Chata), San-Pédro (Bosson Kasi Jacques)
+    supervisor_overrides = {
+        "KOFFI ANGE MICKAEL": {"role": "superviseur", "ville": "Yamoussoukro", "equipe": "Yamoussoukro"},
+        "KOUKOUGNON EULOGE": {"role": "superviseur", "ville": "Daloa", "equipe": "Daloa"},
+        "BERTHE MAFINE CHATA": {"role": "superviseur", "ville": "Abengourou", "equipe": "Abengourou"},
+        "BOSSON KASI JACQUES": {"role": "superviseur", "ville": "San-Pedro", "equipe": "San-Pedro"},
+    }
+    for sup_name, sup_info in supervisor_overrides.items():
+        mask = enr_df["nom_prenoms"].str.upper().str.contains(sup_name, na=False)
+        if mask.any():
+            enr_df.loc[mask, "role"] = sup_info["role"]
+            enr_df.loc[mask, "ville"] = sup_info["ville"]
+            enr_df.loc[mask, "equipe"] = sup_info["equipe"]
+
     is_supervisor_role = enr_df["role"].str.lower().str.contains(ROLE_SUPERVISEUR_KW, na=False)
     commerciaux_df = enr_df[~is_supervisor_role].drop_duplicates(subset="code_parrainage", keep="last")
     superviseurs_df = enr_df[is_supervisor_role].drop_duplicates(subset="code_parrainage", keep="last")
@@ -208,6 +227,13 @@ else:
     df["nom_superviseur"] = "Non assigné"
     df["equipe"] = "Non assignée"
     df["nom_prenoms"] = df["_username_brut"]
+
+# Correction spécifique pour s'assurer que le code 60DDE0 (Yapo Ayekoe Bienvenue) est bien rattaché
+mask_yapo = df["code_agent"] == "60DDE0"
+if mask_yapo.any():
+    df.loc[mask_yapo, "nom_prenoms"] = "YAPO AYEKOE BIENVENUE"
+    df.loc[mask_yapo, "nom_superviseur"] = "KOFFI ANGE MICKAEL"
+    df.loc[mask_yapo, "equipe"] = "Yamoussoukro"
 
 df["code_agent_display"] = df["code_agent"].fillna("Non identifié")
 
@@ -254,7 +280,8 @@ effectif_deploye = len(codes_matches)
 effectif_non_actif = max(effectif_prevu - effectif_deploye, 0)
 nb_non_enrolles = len(codes_actifs_non_enrolles)
 
-top_ville = fdf[loc_col_group].value_counts().idxmax() if not fdf[loc_col_group].dropna().empty else "—"
+# Remplacement de "Meilleure ville" par "Meilleure équipe"
+top_equipe = fdf["equipe"].value_counts().idxmax() if not fdf["equipe"].dropna().empty else "—"
 agent_today = fdf.groupby(["code_agent_display", "nom_prenoms"]).size()
 best_agent_label = "—"
 if not agent_today.empty:
@@ -270,7 +297,7 @@ c4.metric("AVD non actif enrôlé", effectif_non_actif)
 c5.metric("AVD non enrôlé actif", nb_non_enrolles)
 
 c6, c7, c8 = st.columns(3)
-c6.metric("Meilleure ville", top_ville)
+c6.metric("Meilleure équipe", top_equipe)
 c7.metric("Meilleur agent", best_agent_label)
 c8.metric("Activations aujourd'hui", len(fdf))
 
@@ -313,32 +340,46 @@ fig_line.update_xaxes(title=None)
 plot(fig_line)
 
 # =============================================================================
-# ACTIVATIONS PAR VILLE & PAR ÉQUIPE (aujourd'hui)
+# ACTIVATIONS PAR ÉQUIPE (aujourd'hui) — Suppression du graph par ville
 # =============================================================================
-cv, ce = st.columns(2)
-with cv:
-    st.markdown("<h4 class='section-title'>Activations par ville (aujourd'hui)</h4>", unsafe_allow_html=True)
-    ville_counts = fdf[loc_col_group].value_counts().reset_index()
-    ville_counts.columns = ["ville", "count"]
-    fig_ville = px.bar(ville_counts.sort_values("count"), x="count", y="ville", orientation="h", text="count")
-    fig_ville.update_traces(marker_color=T["accent"], textposition="outside")
-    fig_ville.update_yaxes(title=None)
-    plot(fig_ville, height=340)
+st.markdown("<h4 class='section-title'>Activations par équipe (aujourd'hui)</h4>", unsafe_allow_html=True)
+equipe_counts = fdf["equipe"].value_counts().reset_index()
+equipe_counts.columns = ["equipe", "count"]
+fig_equipe = px.bar(equipe_counts.sort_values("count"), x="count", y="equipe", orientation="h", text="count")
+fig_equipe.update_traces(marker_color=T["secondary"], textposition="outside")
+fig_equipe.update_yaxes(title=None)
+plot(fig_equipe, height=340)
+st.dataframe(
+    equipe_counts.rename(columns={"equipe": "Équipe", "count": "Activations (aujourd'hui)"}).sort_values(
+        "Activations (aujourd'hui)", ascending=False
+    ),
+    use_container_width=True, hide_index=True,
+)
 
-with ce:
-    st.markdown("<h4 class='section-title'>Activations par équipe (aujourd'hui)</h4>", unsafe_allow_html=True)
-    equipe_counts = fdf["equipe"].value_counts().reset_index()
-    equipe_counts.columns = ["equipe", "count"]
-    fig_equipe = px.bar(equipe_counts.sort_values("count"), x="count", y="equipe", orientation="h", text="count")
-    fig_equipe.update_traces(marker_color=T["secondary"], textposition="outside")
-    fig_equipe.update_yaxes(title=None)
-    plot(fig_equipe, height=340)
-    st.dataframe(
-        equipe_counts.rename(columns={"equipe": "Équipe", "count": "Activations (aujourd'hui)"}).sort_values(
-            "Activations (aujourd'hui)", ascending=False
-        ),
-        use_container_width=True, hide_index=True,
-    )
+# =============================================================================
+# PERFORMANCES / ACTIVATIONS DES SUPERVISEURS (Aujourd'hui)
+# =============================================================================
+st.markdown("<h3 class='section-title'>Performances des Superviseurs (Aujourd'hui)</h3>", unsafe_allow_html=True)
+if not superviseurs_df.empty:
+    sup_perf_list = []
+    for _, sup_row in superviseurs_df.iterrows():
+        s_name = sup_row.get("nom_prenoms", "Inconnu")
+        s_code = sup_row.get("code_parrainage", "—")
+        s_team = sup_row.get("equipe", "Non assignée")
+        
+        # Le total du superviseur correspond au total des activations de son équipe
+        team_activations = len(fdf[fdf["equipe"] == s_team]) if s_team != "Non assignée" else 0
+        
+        sup_perf_list.append({
+            "Code parrainage": s_code,
+            "Nom & Prénoms": s_name,
+            "Équipe": s_team,
+            "Activations (Aujourd'hui)": team_activations
+        })
+    df_sup_perf = pd.DataFrame(sup_perf_list).sort_values("Activations (Aujourd'hui)", ascending=False)
+    st.dataframe(df_sup_perf, use_container_width=True, hide_index=True)
+else:
+    st.caption("Aucun superviseur trouvé dans le référentiel d'enrôlement.")
 
 # =============================================================================
 # TOP 5 MEILLEURS AGENTS (aujourd'hui)
@@ -368,11 +409,10 @@ else:
 
 # =============================================================================
 # RÉPARTITION PAR ÉQUIPE & SUIVI DES SUPERVISEURS (aujourd'hui)
-# Inclut le détail : chaque AVD, son nombre d'activations du jour, par équipe.
 # =============================================================================
-st.markdown("<h3 class='section-title'>Répartition par équipe & suivi des superviseurs</h3>", unsafe_allow_html=True)
+st.markdown("<h3 class='section-title'>Répartition par équipe & détails des AVD</h3>", unsafe_allow_html=True)
 
-equipes_ordered = equipe_counts.sort_values("count", ascending=False)["equipe"].tolist()
+equipes_ordered = equipe_counts.sort_values("count", ascending=False)["equipe"].tolist() if not equipe_counts.empty else []
 for team in equipes_ordered:
     team_df = fdf[fdf["equipe"] == team]
     total_team = len(team_df)
@@ -383,7 +423,7 @@ for team in equipes_ordered:
         team_df.groupby(["code_agent_display", "nom_prenoms"]).size().reset_index(name="Activations")
         .sort_values("Activations", ascending=False)
     )
-    agents_team["% de l'équipe"] = (agents_team["Activations"] / total_team * 100).round(1).astype(str) + " %"
+    agents_team["% de l'équipe"] = (agents_team["Activations"] / total_team * 100).round(1).astype(str) + " %" if total_team > 0 else "0 %"
 
     st.markdown(
         f"<div class='team-header'>🏷️ Équipe {team} — Superviseur : {sup_name} ({sup_code}) — "
