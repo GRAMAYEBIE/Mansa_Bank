@@ -483,4 +483,4 @@ for team in equipes_ordered:
         use_container_width=True, hide_index=True,
     )
 
-st.caption("Vue Superviseur — Correction automatique O/0 et matching permanent de YAPO AYEKOE BIENVENUE.")
+st.caption("Vue Superviseur — FAIT PAR AYEBIE GRAM MESCHAC DATA_SCIENTIST/DATA_ENGINEER  - BIENVENUE YAPO .")
