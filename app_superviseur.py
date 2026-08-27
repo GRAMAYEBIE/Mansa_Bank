@@ -316,17 +316,16 @@ if not agent_today.empty:
     best_agent_label = f"{best_name} ({best_code}) — {best_count}"
 
 st.markdown(f"<h3 class='section-title'>Effectifs AVD ({periode_selection.lower()})</h3>", unsafe_allow_html=True)
-c1, c2, c3, c4, c5 = st.columns(5)
+c1, c2, c3, c4 = st.columns(4)
 c1.metric("AVD prévu", effectif_prevu)
 c2.metric("AVD déployé", effectif_deploye)
 c3.metric("AVD actif enrôlé", effectif_deploye)
-c4.metric("AVD non actif enrôlé", effectif_non_actif)
-c5.metric("AVD non enrôlé actif", nb_non_enrolles)
+c4.metric("AVD non enrôlé actif", nb_non_enrolles)
 
-c6, c7, c8 = st.columns(3)
-c6.metric("Meilleure équipe", top_equipe)
-c7.metric("Meilleur agent", best_agent_label)
-c8.metric(f"Activations ({periode_selection.lower()})", len(fdf))
+c5, c6, c7 = st.columns(3)
+c5.metric("Meilleure équipe", top_equipe)
+c6.metric("Meilleur agent", best_agent_label)
+c7.metric(f"Activations ({periode_selection.lower()})", len(fdf))
 
 # =============================================================================
 # OBJECTIF MENSUEL (jauge uniquement)
@@ -382,40 +381,6 @@ st.dataframe(
     ),
     use_container_width=True, hide_index=True,
 )
-
-# =============================================================================
-# PERFORMANCES DES SUPERVISEURS
-# =============================================================================
-st.markdown(f"<h3 class='section-title'>Performances des Superviseurs ({periode_selection})</h3>", unsafe_allow_html=True)
-if not superviseurs_df.empty:
-    sup_perf_list = []
-    sup_uniques_forces = {
-        "Daloa": "KOUKOUGNON EULOGE",
-        "Abengourou": "BERTHE MAFINE CHATA",
-        "San-Pedro": "BOSSON KASI JACQUES",
-        "Yamoussoukro": "KOFFI ANGE MICKAEL"
-    }
-    
-    for team_nom, sup_nom in sup_uniques_forces.items():
-        s_code = "—"
-        for _, r in superviseurs_df.iterrows():
-            if str(r.get("equipe", "")).lower() == team_nom.lower() or sup_nom.split()[-1] in str(r.get("nom_prenoms", "")).upper():
-                s_code = r.get("code_parrainage", "—")
-                break
-                
-        team_activations = len(fdf[fdf["equipe"].str.lower() == team_nom.lower()])
-        
-        sup_perf_list.append({
-            "Code parrainage": s_code,
-            "Nom & Prénoms": sup_nom,
-            "Équipe": team_nom,
-            f"Activations ({periode_selection})": team_activations
-        })
-        
-    df_sup_perf = pd.DataFrame(sup_perf_list).sort_values(f"Activations ({periode_selection})", ascending=False)
-    st.dataframe(df_sup_perf, use_container_width=True, hide_index=True)
-else:
-    st.caption("Aucun superviseur trouvé dans le référentiel d'enrôlement.")
 
 # =============================================================================
 # TOP 5 MEILLEURS AGENTS
