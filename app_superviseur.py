@@ -254,7 +254,7 @@ if mask_yapo.any():
 team_supervisor_mapping = {
     "Daloa": "KOUKOUGNON EULOGE",
     "Abengourou": "BERTHE MAFINE CHATA",
-    "San-Pedro": "BOSSON KASI JACQUES",
+    "San-Pedro": "BOSSON KASSI JACQUES",
     "Yamoussoukro": "KOFFI ANGE MICKAEL",
 }
 for equipe_cible, sup_cible in team_supervisor_mapping.items():
