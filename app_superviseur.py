@@ -1,5 +1,5 @@
 """
-Vue Superviseur — avec sélecteur Aujourd'hui / Hier pour auditer les activations.
+Vue Superviseur — avec sélecteur Aujourd'hui / Hier et forçage direct des superviseurs par zone.
 """
 
 import unicodedata
@@ -71,7 +71,7 @@ def to_local(ts):
             ts = ts.tz_localize("UTC")
         return ts.tz_convert(_LOCAL_TZ)
     if ts.tzinfo is None:
-        ts = ts.replace(tzinfo=timezone.utc)
+        ts = ts.replace(tsinfo=timezone.utc)
     return ts.astimezone(_LOCAL_TZ)
 
 
@@ -80,12 +80,11 @@ st_autorefresh(interval=config.AUTO_RELOAD_MS, key="auto_reload_sup")
 with st.sidebar:
     st.markdown("### ⚡ Contrôles & Période")
     
-    # --- SÉLECTEUR DE PÉRIODE (Aujourd'hui / Hier) ---
     periode_selection = st.radio(
         "Afficher l'activité de :",
         options=["Aujourd'hui", "Hier"],
         index=0,
-        help="Permet de basculer entre la journée en cours et la veille (très utile tard le soir ou la nuit)."
+        help="Permet de basculer entre la journée en cours et la veille."
     )
 
     if st.button("🔄 Forcer le rafraîchissement", use_container_width=True):
@@ -193,7 +192,7 @@ if not enr_df.empty:
     enr_df["code_parrainage"] = enr_df["code_parrainage"].astype(str).str.strip().str.upper()
     enr_df["role"] = enr_df["role"].fillna("")
     
-    # --- FORÇAGE DES SUPERVISEURS OFFICIELS PAR ZONE ---
+    # --- FORÇAGE OFFICIEL DES SUPERVISEURS PAR ZONE / ÉQUIPE ---
     supervisor_overrides = {
         "KOFFI ANGE MICKAEL": {"role": "superviseur", "ville": "Yamoussoukro", "equipe": "Yamoussoukro"},
         "KOUKOUGNON EULOGE": {"role": "superviseur", "ville": "Daloa", "equipe": "Daloa"},
@@ -235,6 +234,17 @@ if mask_yapo.any():
     df.loc[mask_yapo, "nom_superviseur"] = "KOFFI ANGE MICKAEL"
     df.loc[mask_yapo, "equipe"] = "Yamoussoukro"
 
+# -------------------------------------------------------------------------
+# FORÇAGE DIRECT DES SUPERVISEURS PAR ÉQUIPE / ZONE (Écrasement propre)
+# -------------------------------------------------------------------------
+team_supervisor_mapping = {
+    "San-Pedro": "BOSSON KASI JACQUES",
+    "Daloa": "KOUKOUGNON EULOGE",
+    "Yamoussoukro": "KOFFI ANGE MICKAEL",
+}
+for equipe_cible, sup_cible in team_supervisor_mapping.items():
+    df.loc[df["equipe"].str.lower() == equipe_cible.lower(), "nom_superviseur"] = sup_cible
+
 df["code_agent_display"] = df["code_agent"].fillna("Non identifié")
 
 # --- Dédoublonnage : 1 numéro client = 1 activation ---
@@ -256,13 +266,11 @@ now_utc = datetime.now(timezone.utc)
 today = now_utc.date()
 hier = today - timedelta(days=1)
 
-# Détermination de la date cible en fonction du choix de l'utilisateur
 target_date = today if periode_selection == "Aujourd'hui" else hier
 
 last_submission = df["date"].max() if pd.notna(df["date"].max()) else None
 is_stale = last_submission is not None and (now_utc - last_submission).total_seconds() / 3600 > config.STALE_DATA_HOURS
 
-# Filtrage sur la date sélectionnée
 fdf = df[df["date_only"] == target_date]
 
 badge = "<span class='live-badge'>● LIVE</span>" if periode_selection == "Aujourd'hui" else "<span class='live-badge' style='background:rgba(107,114,128,0.1); color:#6B7280; border-color:#6B7280;'>ARCHIVE HIER</span>"
@@ -332,7 +340,7 @@ fig_gauge = go.Figure(go.Indicator(
 plot(fig_gauge, height=280)
 
 # =============================================================================
-# ÉVOLUTION DES ACTIVITÉS (contexte global)
+# ÉVOLUTION DES ACTIVITÉS
 # =============================================================================
 st.markdown("<h3 class='section-title'>Évolution des activités</h3>", unsafe_allow_html=True)
 daily = df.groupby("date_only").size().reset_index(name="activations")
@@ -369,6 +377,14 @@ if not superviseurs_df.empty:
         s_code = sup_row.get("code_parrainage", "—")
         s_team = sup_row.get("equipe", "Non assignée")
         
+        # Application du forçage dans le tableau récapitulatif superviseur
+        if s_team.lower() == "san-pedro":
+            s_name = "BOSSON KASI JACQUES"
+        elif s_team.lower() == "daloa":
+            s_name = "KOUKOUGNON EULOGE"
+        elif s_team.lower() == "yamoussoukro":
+            s_name = "KOFFI ANGE MICKAEL"
+
         team_activations = len(fdf[fdf["equipe"] == s_team]) if s_team != "Non assignée" else 0
         
         sup_perf_list.append({
@@ -417,7 +433,17 @@ equipes_ordered = equipe_counts.sort_values("count", ascending=False)["equipe"].
 for team in equipes_ordered:
     team_df = fdf[fdf["equipe"] == team]
     total_team = len(team_df)
-    sup_name = team_df["nom_superviseur"].mode().iloc[0] if not team_df["nom_superviseur"].mode().empty else "Non assigné"
+    
+    # Récupération sécurisée du superviseur forcé selon l'équipe
+    if team.lower() == "san-pedro":
+        sup_name = "BOSSON KASI JACQUES"
+    elif team.lower() == "daloa":
+        sup_name = "KOUKOUGNON EULOGE"
+    elif team.lower() == "yamoussoukro":
+        sup_name = "KOFFI ANGE MICKAEL"
+    else:
+        sup_name = team_df["nom_superviseur"].mode().iloc[0] if not team_df["nom_superviseur"].mode().empty else "Non assigné"
+
     sup_code = sup_code_lookup.get(sup_name, "—")
 
     agents_team = (
@@ -436,4 +462,4 @@ for team in equipes_ordered:
         use_container_width=True, hide_index=True,
     )
 
-st.caption("Vue Superviseur — sélecteur de période actif.")
+st.caption("Vue Superviseur — forçage des superviseurs actif.")
