@@ -1,5 +1,5 @@
 """
-Vue Superviseur — avec normalisation intelligente des codes (O vs 0) et association forcée YAPO.
+Vue Superviseur — Intégration des activations personnelles des superviseurs (comptabilisées globalement et par équipe).
 """
 
 import unicodedata
@@ -174,7 +174,6 @@ def extract_code(username):
         return None
     raw = username.strip().upper()
     
-    # Correction automatique de la confusion O / 0 fréquente sur les codes parrainage (ex: 60DDEO -> 60DDE0)
     raw_normalized = raw.replace("O", "0") if "60DDE" in raw.replace("O", "0") else raw
     if "60DDE0" in raw_normalized:
         return "60DDE0"
@@ -213,11 +212,18 @@ if not enr_df.empty:
     enr_df.loc[enr_df["equipe"].astype(str).str.upper().str.contains("ABENGOUROU", na=False), "equipe"] = "Abengourou"
 
     is_supervisor_role = enr_df["role"].str.lower().str.contains(ROLE_SUPERVISEUR_KW, na=False)
+    
+    # Références distinctes pour les commerciaux et les superviseurs
     commerciaux_df = enr_df[~is_supervisor_role].drop_duplicates(subset="code_parrainage", keep="last")
     superviseurs_df = enr_df[is_supervisor_role].drop_duplicates(subset="code_parrainage", keep="last")
+    
     codes_enrolles_commerciaux = set(commerciaux_df["code_parrainage"].dropna().unique())
+    codes_enrolles_superviseurs = set(superviseurs_df["code_parrainage"].dropna().unique())
+    codes_tous_enrolles = codes_enrolles_commerciaux | codes_enrolles_superviseurs
+
     sup_code_lookup = superviseurs_df.set_index("nom_prenoms")["code_parrainage"].to_dict()
 
+    # Jointure globale sur l'enrôlement complet (commerciaux ET superviseurs)
     df = df.merge(
         enr_df[["code_parrainage", "nom_prenoms", "nom_superviseur", "equipe", "role", "ville", "region"]]
         .rename(columns={"ville": "agent_ville"}),
@@ -228,7 +234,7 @@ if not enr_df.empty:
     df["nom_prenoms"] = df["nom_prenoms"].fillna(df["_username_brut"].fillna("Inconnu"))
 else:
     commerciaux_df, superviseurs_df = pd.DataFrame(), pd.DataFrame()
-    codes_enrolles_commerciaux, sup_code_lookup = set(), {}
+    codes_enrolles_commerciaux, codes_enrolles_superviseurs, codes_tous_enrolles, sup_code_lookup = set(), set(), set(), {}
     df["nom_superviseur"] = "Non assigné"
     df["equipe"] = "Non assignée"
     df["nom_prenoms"] = df["_username_brut"]
@@ -261,6 +267,20 @@ for equipe_cible, sup_cible in team_supervisor_mapping.items():
     mask_eq = df["equipe"].str.lower().str.contains(equipe_cible.lower(), na=False)
     df.loc[mask_eq, "nom_superviseur"] = sup_cible
     df.loc[mask_eq, "equipe"] = equipe_cible
+
+# Correction spécifique pour s'assurer que les lignes dont le code appartient à un superviseur portent bien son équipe et son nom s'ils ont fait des activations
+supervisor_code_to_info = {
+    "E96B95": {"nom": "KOUKOUGNON EULOGE", "equipe": "Daloa"},
+    "4A64A3": {"nom": "KOFFI ANGE MICKAEL", "equipe": "Yamoussoukro"},
+    "AC5AD4": {"nom": "BERTHE MAFINE CHATA", "equipe": "Abengourou"},
+    "82884A": {"nom": "BOSSON KASI JACQUES", "equipe": "San-Pedro"}
+}
+for sup_code, info in supervisor_code_to_info.items():
+    mask_sup_code = (df["code_agent"] == sup_code)
+    if mask_sup_code.any():
+        df.loc[mask_sup_code, "nom_prenoms"] = info["nom"]
+        df.loc[mask_sup_code, "equipe"] = info["equipe"]
+        df.loc[mask_sup_code, "nom_superviseur"] = info["nom"]
 
 df["code_agent_display"] = df["code_agent"].fillna("Non identifié")
 
@@ -300,11 +320,11 @@ if is_stale and periode_selection == "Aujourd'hui":
 # EFFECTIFS AVD DE LA JOURNÉE SÉLECTIONNÉE
 # =============================================================================
 codes_actifs = set(fdf["code_agent"].dropna().unique())
-codes_matches = codes_actifs & codes_enrolles_commerciaux
-codes_actifs_non_enrolles = codes_actifs - set(enr_df["code_parrainage"].dropna().unique()) if not enr_df.empty else set()
+codes_matches = codes_actifs & codes_tous_enrolles
+codes_actifs_non_enrolles = codes_actifs - codes_tous_enrolles if not enr_df.empty else set()
 
 effectif_prevu = len(codes_enrolles_commerciaux)
-effectif_deploye = len(codes_matches)
+effectif_deploye = len(codes_actifs & codes_enrolles_commerciaux)
 effectif_non_actif = max(effectif_prevu - effectif_deploye, 0)
 nb_non_enrolles = len(codes_actifs_non_enrolles)
 
@@ -384,25 +404,24 @@ st.dataframe(
 )
 
 # =============================================================================
-# PERFORMANCES DES SUPERVISEURS
+# PERFORMANCES DES SUPERVISEURS (Inclus leurs propres activations)
 # =============================================================================
 st.markdown(f"<h3 class='section-title'>Performances des Superviseurs ({periode_selection})</h3>", unsafe_allow_html=True)
 if not superviseurs_df.empty:
     sup_perf_list = []
     sup_uniques_forces = {
-        "Daloa": "KOUKOUGNON EULOGE",
-        "Abengourou": "BERTHE MAFINE CHATA",
-        "San-Pedro": "BOSSON KASI JACQUES",
-        "Yamoussoukro": "KOFFI ANGE MICKAEL"
+        "Daloa": {"nom": "KOUKOUGNON EULOGE", "code": "E96B95"},
+        "Abengourou": {"nom": "BERTHE MAFINE CHATA", "code": "AC5AD4"},
+        "San-Pedro": {"nom": "BOSSON KASI JACQUES", "code": "82884A"},
+        "Yamoussoukro": {"nom": "KOFFI ANGE MICKAEL", "code": "4A64A3"}
     }
     
-    for team_nom, sup_nom in sup_uniques_forces.items():
-        s_code = "—"
-        for _, r in superviseurs_df.iterrows():
-            if str(r.get("equipe", "")).lower() == team_nom.lower() or sup_nom.split()[-1] in str(r.get("nom_prenoms", "")).upper():
-                s_code = r.get("code_parrainage", "—")
-                break
-                
+    for team_nom, sup_info in sup_uniques_forces.items():
+        s_code = sup_info["code"]
+        sup_nom = sup_info["nom"]
+        
+        # Activations faites personnellement par le superviseur sous son code + les activations de son équipe
+        personal_activations = len(fdf[fdf["code_agent"] == s_code])
         team_activations = len(fdf[fdf["equipe"].str.lower() == team_nom.lower()])
         
         sup_perf_list.append({
@@ -418,7 +437,7 @@ else:
     st.caption("Aucun superviseur trouvé dans le référentiel d'enrôlement.")
 
 # =============================================================================
-# TOP 5 MEILLEURS AGENTS
+# TOP 5 MEILLEURS AGENTS (Inclut les superviseurs s'ils performent)
 # =============================================================================
 st.markdown(f"<h3 class='section-title'>Top 5 meilleurs agents ({periode_selection.lower()})</h3>", unsafe_allow_html=True)
 top5 = (
@@ -444,7 +463,7 @@ else:
     st.caption(f"Aucune activation enregistrée pour {periode_selection.lower()}.")
 
 # =============================================================================
-# RÉPARTITION PAR ÉQUIPE & DÉTAILS DES AVD
+# RÉPARTITION PAR ÉQUIPE & DÉTAILS DES AVD (Inclut le superviseur dans la liste)
 # =============================================================================
 st.markdown("<h3 class='section-title'>Répartition par équipe & détails des AVD</h3>", unsafe_allow_html=True)
 
@@ -455,17 +474,15 @@ for team in equipes_ordered:
     
     t_lower = team.lower()
     if "daloa" in t_lower:
-        sup_name = "KOUKOUGNON EULOGE"
+        sup_name, sup_code = "KOUKOUGNON EULOGE", "E96B95"
     elif "abengourou" in t_lower:
-        sup_name = "BERTHE MAFINE CHATA"
+        sup_name, sup_code = "BERTHE MAFINE CHATA", "AC5AD4"
     elif "san" in t_lower or "pedro" in t_lower:
-        sup_name = "BOSSON KASI JACQUES"
+        sup_name, sup_code = "BOSSON KASI JACQUES", "82884A"
     elif "yamoussoukro" in t_lower:
-        sup_name = "KOFFI ANGE MICKAEL"
+        sup_name, sup_code = "KOFFI ANGE MICKAEL", "4A64A3"
     else:
-        sup_name = team_df["nom_superviseur"].mode().iloc[0] if not team_df["nom_superviseur"].mode().empty else "Non assigné"
-
-    sup_code = sup_code_lookup.get(sup_name, "—")
+        sup_name, sup_code = "Non assigné", "—"
 
     agents_team = (
         team_df.groupby(["code_agent_display", "nom_prenoms"]).size().reset_index(name="Activations")
@@ -483,4 +500,4 @@ for team in equipes_ordered:
         use_container_width=True, hide_index=True,
     )
 
-st.caption("Vue Superviseur — Correction automatique O/0 et matching permanent de YAPO AYEKOE BIENVENUE.")
+st.caption("Vue Superviseur — Intégration complète des activations personnelles des superviseurs dans les totaux et les équipes.")
