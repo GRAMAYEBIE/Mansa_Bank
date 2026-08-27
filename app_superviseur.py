@@ -1,5 +1,5 @@
 """
-Vue Superviseur — version avec mise à jour directe des superviseurs officiels par zone.
+Vue Superviseur — version avec fusion Abengourou et forçage strict San-Pédro.
 """
 
 import unicodedata
@@ -165,7 +165,7 @@ agent_col = next(
     None,
 )
 
-# --- Extraction du code parrainage (avec unification forcée de 60DDE0 -> 60DDE0) ---
+# --- Extraction du code parrainage ---
 CODE_PATTERN = re.compile(r"^[0-9A-F]{6}$")
 
 
@@ -193,7 +193,7 @@ if not enr_df.empty:
     enr_df["role"] = enr_df["role"].fillna("")
     
     # -------------------------------------------------------------------------
-    # SUPERVISEURS OFFICIELS PAR ZONE (Mise à jour directe)
+    # CONFIGURATION OFFICIELLE ET UNIFICATION DES ÉQUIPES (Abengourou regroupé)
     # -------------------------------------------------------------------------
     supervisor_overrides = {
         "KOFFI ANGE MICKAEL": {"role": "superviseur", "ville": "Yamoussoukro", "equipe": "Yamoussoukro"},
@@ -207,6 +207,9 @@ if not enr_df.empty:
             enr_df.loc[mask, "role"] = sup_info["role"]
             enr_df.loc[mask, "ville"] = sup_info["ville"]
             enr_df.loc[mask, "equipe"] = sup_info["equipe"]
+
+    # Fusion des variantes d'Abengourou en une seule équipe unique
+    enr_df.loc[enr_df["equipe"].astype(str).str.upper().str.contains("ABENGOUROU", na=False), "equipe"] = "Abengourou"
 
     is_supervisor_role = enr_df["role"].str.lower().str.contains(ROLE_SUPERVISEUR_KW, na=False)
     commerciaux_df = enr_df[~is_supervisor_role].drop_duplicates(subset="code_parrainage", keep="last")
@@ -229,7 +232,10 @@ else:
     df["equipe"] = "Non assignée"
     df["nom_prenoms"] = df["_username_brut"]
 
-# --- ASSOCIATION EXPLICITE DE 60DDE0 -> 60DDE0 (YAPO AYEKOE BIENVENUE) ---
+# Unification également des équipes Abengourou dans le DataFrame principal des activations
+df.loc[df["equipe"].astype(str).str.upper().str.contains("ABENGOUROU", na=False), "equipe"] = "Abengourou"
+
+# --- ASSOCIATION EXPLICITE DE 60DDE0 (YAPO AYEKOE BIENVENUE) ---
 mask_yapo = df["code_agent"] == "60DDE0"
 if mask_yapo.any():
     df.loc[mask_yapo, "nom_prenoms"] = "YAPO AYEKOE BIENVENUE"
@@ -237,7 +243,7 @@ if mask_yapo.any():
     df.loc[mask_yapo, "equipe"] = "Yamoussoukro"
 
 # -------------------------------------------------------------------------
-# FORÇAGE DIRECT DES SUPERVISEURS OFFICIELS PAR ÉQUIPE / ZONE
+# FORÇAGE STRICT DES SUPERVISEURS OFFICIELS PAR ÉQUIPE / ZONE
 # -------------------------------------------------------------------------
 team_supervisor_mapping = {
     "Daloa": "KOUKOUGNON EULOGE",
@@ -246,7 +252,10 @@ team_supervisor_mapping = {
     "Yamoussoukro": "KOFFI ANGE MICKAEL",
 }
 for equipe_cible, sup_cible in team_supervisor_mapping.items():
-    df.loc[df["equipe"].str.lower() == equipe_cible.lower(), "nom_superviseur"] = sup_cible
+    # Application insensible à la casse et robuste sur le nom de l'équipe
+    mask_eq = df["equipe"].str.lower().str.contains(equipe_cible.lower(), na=False)
+    df.loc[mask_eq, "nom_superviseur"] = sup_cible
+    df.loc[mask_eq, "equipe"] = equipe_cible  # Uniformise proprement le libellé de l'équipe
 
 df["code_agent_display"] = df["code_agent"].fillna("Non identifié")
 
@@ -375,30 +384,32 @@ st.dataframe(
 st.markdown(f"<h3 class='section-title'>Performances des Superviseurs ({periode_selection})</h3>", unsafe_allow_html=True)
 if not superviseurs_df.empty:
     sup_perf_list = []
-    for _, sup_row in superviseurs_df.iterrows():
-        s_name = sup_row.get("nom_prenoms", "Inconnu")
-        s_code = sup_row.get("code_parrainage", "—")
-        s_team = sup_row.get("equipe", "Non assignée")
-        
-        # Forçage des superviseurs officiels dans le tableau récapitulatif
-        t_lower = s_team.lower()
-        if t_lower == "daloa":
-            s_name = "KOUKOUGNON EULOGE"
-        elif t_lower == "abengourou":
-            s_name = "BERTHE MAFINE CHATA"
-        elif t_lower == "san-pedro":
-            s_name = "BOSSON KASI JACQUES"
-        elif t_lower == "yamoussoukro":
-            s_name = "KOFFI ANGE MICKAEL"
-
-        team_activations = len(fdf[fdf["equipe"] == s_team]) if s_team != "Non assignée" else 0
+    
+    # On garantit l'unicité des superviseurs listés par équipe officielle
+    sup_uniques_forces = {
+        "Daloa": "KOUKOUGNON EULOGE",
+        "Abengourou": "BERTHE MAFINE CHATA",
+        "San-Pedro": "BOSSON KASI JACQUES",
+        "Yamoussoukro": "KOFFI ANGE MICKAEL"
+    }
+    
+    for team_nom, sup_nom in sup_uniques_forces.items():
+        # Recherche du code parrainage du superviseur correspondant
+        s_code = "—"
+        for _, r in superviseurs_df.iterrows():
+            if str(r.get("equipe", "")).lower() == team_nom.lower() or sup_nom.split()[-1] in str(r.get("nom_prenoms", "")).upper():
+                s_code = r.get("code_parrainage", "—")
+                break
+                
+        team_activations = len(fdf[fdf["equipe"].str.lower() == team_nom.lower()])
         
         sup_perf_list.append({
             "Code parrainage": s_code,
-            "Nom & Prénoms": s_name,
-            "Équipe": s_team,
+            "Nom & Prénoms": sup_nom,
+            "Équipe": team_nom,
             f"Activations ({periode_selection})": team_activations
         })
+        
     df_sup_perf = pd.DataFrame(sup_perf_list).sort_values(f"Activations ({periode_selection})", ascending=False)
     st.dataframe(df_sup_perf, use_container_width=True, hide_index=True)
 else:
@@ -441,13 +452,13 @@ for team in equipes_ordered:
     total_team = len(team_df)
     
     t_lower = team.lower()
-    if t_lower == "daloa":
+    if "daloa" in t_lower:
         sup_name = "KOUKOUGNON EULOGE"
-    elif t_lower == "abengourou":
+    elif "abengourou" in t_lower:
         sup_name = "BERTHE MAFINE CHATA"
-    elif t_lower == "san-pedro":
+    elif "san" in t_lower or "pedro" in t_lower:
         sup_name = "BOSSON KASI JACQUES"
-    elif t_lower == "yamoussoukro":
+    elif "yamoussoukro" in t_lower:
         sup_name = "KOFFI ANGE MICKAEL"
     else:
         sup_name = team_df["nom_superviseur"].mode().iloc[0] if not team_df["nom_superviseur"].mode().empty else "Non assigné"
@@ -470,4 +481,4 @@ for team in equipes_ordered:
         use_container_width=True, hide_index=True,
     )
 
-st.caption("Vue Superviseur — mise à jour des superviseurs officiels appliquée.")
+st.caption("Vue Superviseur — Abengourou fusionné et San-Pédro forcé avec succès.")
