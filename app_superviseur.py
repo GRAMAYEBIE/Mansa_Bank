@@ -201,7 +201,7 @@ if not enr_df.empty:
         "KOFFI ANGE MICKAEL": {"role": "superviseur", "ville": "Yamoussoukro", "equipe": "Yamoussoukro"},
         "KOUKOUGNON EULOGE": {"role": "superviseur", "ville": "Daloa", "equipe": "Daloa"},
         "BERTHE MAFINE CHATA": {"role": "superviseur", "ville": "Abengourou", "equipe": "Abengourou"},
-        "BOSSON KASI JACQUES": {"role": "superviseur", "ville": "San-Pedro", "equipe": "San-Pedro"},
+        "BOSSON KASSI JACQUES": {"role": "superviseur", "ville": "San-Pedro", "equipe": "San-Pedro"},
     }
     for sup_name, sup_info in supervisor_overrides.items():
         mask = enr_df["nom_prenoms"].str.upper().str.contains(sup_name, na=False)
