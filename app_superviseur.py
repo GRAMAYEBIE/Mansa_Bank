@@ -1,5 +1,5 @@
 """
-Vue Superviseur — avec sélecteur Aujourd'hui / Hier et forçage direct des superviseurs par zone.
+Vue Superviseur — version avec mise à jour directe des superviseurs officiels par zone.
 """
 
 import unicodedata
@@ -165,7 +165,7 @@ agent_col = next(
     None,
 )
 
-# --- Extraction du code parrainage (avec unification forcée de 60DDE0) ---
+# --- Extraction du code parrainage (avec unification forcée de 60DDE0 -> 60DDE0) ---
 CODE_PATTERN = re.compile(r"^[0-9A-F]{6}$")
 
 
@@ -192,7 +192,9 @@ if not enr_df.empty:
     enr_df["code_parrainage"] = enr_df["code_parrainage"].astype(str).str.strip().str.upper()
     enr_df["role"] = enr_df["role"].fillna("")
     
-    # --- FORÇAGE OFFICIEL DES SUPERVISEURS PAR ZONE / ÉQUIPE ---
+    # -------------------------------------------------------------------------
+    # SUPERVISEURS OFFICIELS PAR ZONE (Mise à jour directe)
+    # -------------------------------------------------------------------------
     supervisor_overrides = {
         "KOFFI ANGE MICKAEL": {"role": "superviseur", "ville": "Yamoussoukro", "equipe": "Yamoussoukro"},
         "KOUKOUGNON EULOGE": {"role": "superviseur", "ville": "Daloa", "equipe": "Daloa"},
@@ -227,7 +229,7 @@ else:
     df["equipe"] = "Non assignée"
     df["nom_prenoms"] = df["_username_brut"]
 
-# --- ASSOCIATION EXPLICITE DE 60DDE0 (YAPO AYEKOE BIENVENUE) ---
+# --- ASSOCIATION EXPLICITE DE 60DDE0 -> 60DDE0 (YAPO AYEKOE BIENVENUE) ---
 mask_yapo = df["code_agent"] == "60DDE0"
 if mask_yapo.any():
     df.loc[mask_yapo, "nom_prenoms"] = "YAPO AYEKOE BIENVENUE"
@@ -235,11 +237,12 @@ if mask_yapo.any():
     df.loc[mask_yapo, "equipe"] = "Yamoussoukro"
 
 # -------------------------------------------------------------------------
-# FORÇAGE DIRECT DES SUPERVISEURS PAR ÉQUIPE / ZONE (Écrasement propre)
+# FORÇAGE DIRECT DES SUPERVISEURS OFFICIELS PAR ÉQUIPE / ZONE
 # -------------------------------------------------------------------------
 team_supervisor_mapping = {
-    "San-Pedro": "BOSSON KASI JACQUES",
     "Daloa": "KOUKOUGNON EULOGE",
+    "Abengourou": "BERTHE MAFINE CHATA",
+    "San-Pedro": "BOSSON KASI JACQUES",
     "Yamoussoukro": "KOFFI ANGE MICKAEL",
 }
 for equipe_cible, sup_cible in team_supervisor_mapping.items():
@@ -377,12 +380,15 @@ if not superviseurs_df.empty:
         s_code = sup_row.get("code_parrainage", "—")
         s_team = sup_row.get("equipe", "Non assignée")
         
-        # Application du forçage dans le tableau récapitulatif superviseur
-        if s_team.lower() == "san-pedro":
-            s_name = "BOSSON KASI JACQUES"
-        elif s_team.lower() == "daloa":
+        # Forçage des superviseurs officiels dans le tableau récapitulatif
+        t_lower = s_team.lower()
+        if t_lower == "daloa":
             s_name = "KOUKOUGNON EULOGE"
-        elif s_team.lower() == "yamoussoukro":
+        elif t_lower == "abengourou":
+            s_name = "BERTHE MAFINE CHATA"
+        elif t_lower == "san-pedro":
+            s_name = "BOSSON KASI JACQUES"
+        elif t_lower == "yamoussoukro":
             s_name = "KOFFI ANGE MICKAEL"
 
         team_activations = len(fdf[fdf["equipe"] == s_team]) if s_team != "Non assignée" else 0
@@ -434,12 +440,14 @@ for team in equipes_ordered:
     team_df = fdf[fdf["equipe"] == team]
     total_team = len(team_df)
     
-    # Récupération sécurisée du superviseur forcé selon l'équipe
-    if team.lower() == "san-pedro":
-        sup_name = "BOSSON KASI JACQUES"
-    elif team.lower() == "daloa":
+    t_lower = team.lower()
+    if t_lower == "daloa":
         sup_name = "KOUKOUGNON EULOGE"
-    elif team.lower() == "yamoussoukro":
+    elif t_lower == "abengourou":
+        sup_name = "BERTHE MAFINE CHATA"
+    elif t_lower == "san-pedro":
+        sup_name = "BOSSON KASI JACQUES"
+    elif t_lower == "yamoussoukro":
         sup_name = "KOFFI ANGE MICKAEL"
     else:
         sup_name = team_df["nom_superviseur"].mode().iloc[0] if not team_df["nom_superviseur"].mode().empty else "Non assigné"
@@ -462,4 +470,4 @@ for team in equipes_ordered:
         use_container_width=True, hide_index=True,
     )
 
-st.caption("Vue Superviseur — forçage des superviseurs actif.")
+st.caption("Vue Superviseur — mise à jour des superviseurs officiels appliquée.")
