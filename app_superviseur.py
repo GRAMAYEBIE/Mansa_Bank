@@ -1,5 +1,5 @@
 """
-Vue Superviseur — Ajustement ciblé : comptage des activations personnelles des superviseurs sous leur code.
+Vue Superviseur — avec normalisation intelligente des codes (O vs 0) et association forcée YAPO.
 """
 
 import unicodedata
@@ -174,6 +174,7 @@ def extract_code(username):
         return None
     raw = username.strip().upper()
     
+    # Correction automatique de la confusion O / 0 fréquente sur les codes parrainage (ex: 60DDEO -> 60DDE0)
     raw_normalized = raw.replace("O", "0") if "60DDE" in raw.replace("O", "0") else raw
     if "60DDE0" in raw_normalized:
         return "60DDE0"
@@ -217,14 +218,6 @@ if not enr_df.empty:
     codes_enrolles_commerciaux = set(commerciaux_df["code_parrainage"].dropna().unique())
     sup_code_lookup = superviseurs_df.set_index("nom_prenoms")["code_parrainage"].to_dict()
 
-    # Dictionnaire inversé pour retrouver le nom et l'équipe d'un superviseur à partir de son code de parrainage
-    code_to_sup_info = {}
-    for _, row_sup in superviseurs_df.iterrows():
-        scode = str(row_sup["code_parrainage"]).strip().upper()
-        sname = str(row_sup["nom_prenoms"]).strip()
-        sequipe = str(row_sup["equipe"]).strip()
-        code_to_sup_info[scode] = {"nom": sname, "equipe": sequipe}
-
     df = df.merge(
         enr_df[["code_parrainage", "nom_prenoms", "nom_superviseur", "equipe", "role", "ville", "region"]]
         .rename(columns={"ville": "agent_ville"}),
@@ -235,7 +228,7 @@ if not enr_df.empty:
     df["nom_prenoms"] = df["nom_prenoms"].fillna(df["_username_brut"].fillna("Inconnu"))
 else:
     commerciaux_df, superviseurs_df = pd.DataFrame(), pd.DataFrame()
-    codes_enrolles_commerciaux, sup_code_lookup, code_to_sup_info = set(), {}, {}
+    codes_enrolles_commerciaux, sup_code_lookup = set(), {}
     df["nom_superviseur"] = "Non assigné"
     df["equipe"] = "Non assignée"
     df["nom_prenoms"] = df["_username_brut"]
@@ -256,7 +249,7 @@ if mask_yapo.any():
     df.loc[mask_yapo, "equipe"] = "Yamoussoukro"
 
 # -------------------------------------------------------------------------
-# FORÇAGE STRICT DES SUPERVISEURS OFFICIELS PAR ÉQUIPE / ZONE & ATTRIBUTION DES ACTIVITÉS PROPRES
+# FORÇAGE STRICT DES SUPERVISEURS OFFICIELS PAR ÉQUIPE / ZONE
 # -------------------------------------------------------------------------
 team_supervisor_mapping = {
     "Daloa": "KOUKOUGNON EULOGE",
@@ -268,14 +261,6 @@ for equipe_cible, sup_cible in team_supervisor_mapping.items():
     mask_eq = df["equipe"].str.lower().str.contains(equipe_cible.lower(), na=False)
     df.loc[mask_eq, "nom_superviseur"] = sup_cible
     df.loc[mask_eq, "equipe"] = equipe_cible
-
-# Si une ligne correspond au code d'un superviseur, on s'assure qu'elle est bien rattachée à son équipe et son nom
-for scode, sinfo in code_to_sup_info.items():
-    mask_scode = (df["code_agent"] == scode)
-    if mask_scode.any():
-        df.loc[mask_scode, "nom_prenoms"] = sinfo["nom"]
-        df.loc[mask_scode, "equipe"] = sinfo["equipe"]
-        df.loc[mask_scode, "nom_superviseur"] = sinfo["nom"]
 
 df["code_agent_display"] = df["code_agent"].fillna("Non identifié")
 
@@ -399,30 +384,32 @@ st.dataframe(
 )
 
 # =============================================================================
-# PERFORMANCES DES SUPERVISEURS (Compte leurs activations personnelles sous leur code)
+# PERFORMANCES DES SUPERVISEURS
 # =============================================================================
 st.markdown(f"<h3 class='section-title'>Performances des Superviseurs ({periode_selection})</h3>", unsafe_allow_html=True)
 if not superviseurs_df.empty:
     sup_perf_list = []
     sup_uniques_forces = {
-        "Daloa": {"nom": "KOUKOUGNON EULOGE", "code": "E96B95"},
-        "Abengourou": {"nom": "BERTHE MAFINE CHATA", "code": "AC5AD4"},
-        "San-Pedro": {"nom": "BOSSON KASI JACQUES", "code": "82884A"},
-        "Yamoussoukro": {"nom": "KOFFI ANGE MICKAEL", "code": "4A64A3"}
+        "Daloa": "KOUKOUGNON EULOGE",
+        "Abengourou": "BERTHE MAFINE CHATA",
+        "San-Pedro": "BOSSON KASI JACQUES",
+        "Yamoussoukro": "KOFFI ANGE MICKAEL"
     }
     
-    for team_nom, sup_info in sup_uniques_forces.items():
-        s_code = sup_info["code"]
-        sup_nom = sup_info["nom"]
-        
-        # Nombre d'activations faites par le superviseur lui-même sous son propre code
-        activations_perso_sup = len(fdf[(fdf["code_agent"] == s_code) | (fdf["nom_prenoms"].str.upper() == sup_nom)])
+    for team_nom, sup_nom in sup_uniques_forces.items():
+        s_code = "—"
+        for _, r in superviseurs_df.iterrows():
+            if str(r.get("equipe", "")).lower() == team_nom.lower() or sup_nom.split()[-1] in str(r.get("nom_prenoms", "")).upper():
+                s_code = r.get("code_parrainage", "—")
+                break
+                
+        team_activations = len(fdf[fdf["equipe"].str.lower() == team_nom.lower()])
         
         sup_perf_list.append({
             "Code parrainage": s_code,
             "Nom & Prénoms": sup_nom,
             "Équipe": team_nom,
-            f"Activations ({periode_selection})": activations_perso_sup
+            f"Activations ({periode_selection})": team_activations
         })
         
     df_sup_perf = pd.DataFrame(sup_perf_list).sort_values(f"Activations ({periode_selection})", ascending=False)
@@ -468,15 +455,17 @@ for team in equipes_ordered:
     
     t_lower = team.lower()
     if "daloa" in t_lower:
-        sup_name, sup_code = "KOUKOUGNON EULOGE", "E96B95"
+        sup_name = "KOUKOUGNON EULOGE"
     elif "abengourou" in t_lower:
-        sup_name, sup_code = "BERTHE MAFINE CHATA", "AC5AD4"
+        sup_name = "BERTHE MAFINE CHATA"
     elif "san" in t_lower or "pedro" in t_lower:
-        sup_name, sup_code = "BOSSON KASI JACQUES", "82884A"
+        sup_name = "BOSSON KASI JACQUES"
     elif "yamoussoukro" in t_lower:
-        sup_name, sup_code = "KOFFI ANGE MICKAEL", "4A64A3"
+        sup_name = "KOFFI ANGE MICKAEL"
     else:
-        sup_name, sup_code = "Non assigné", "—"
+        sup_name = team_df["nom_superviseur"].mode().iloc[0] if not team_df["nom_superviseur"].mode().empty else "Non assigné"
+
+    sup_code = sup_code_lookup.get(sup_name, "—")
 
     agents_team = (
         team_df.groupby(["code_agent_display", "nom_prenoms"]).size().reset_index(name="Activations")
@@ -494,4 +483,4 @@ for team in equipes_ordered:
         use_container_width=True, hide_index=True,
     )
 
-st.caption("Vue Superviseur — Comptage des activations des superviseurs sous leur code propre.")
+st.caption("Vue Superviseur — Correction automatique O/0 et matching permanent de YAPO AYEKOE BIENVENUE.")
