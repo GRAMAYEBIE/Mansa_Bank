@@ -424,7 +424,7 @@ for team in equipes_ordered:
     elif "abengourou" in t_lower:
         sup_name = "BERTHE MAFINE CHATA"
     elif "san" in t_lower or "pedro" in t_lower:
-        sup_name = "BOSSON KASI JACQUES"
+        sup_name = "BOSSON KASSI JACQUES"
     elif "yamoussoukro" in t_lower:
         sup_name = "KOFFI ANGE MICKAEL"
     else:
