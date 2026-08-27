@@ -164,7 +164,7 @@ agent_col = next(
     None,
 )
 
-# --- Extraction du code parrainage (robuste : /, -, espace) ---
+# --- Extraction du code parrainage (avec unification forcée de 60DDE0) ---
 CODE_PATTERN = re.compile(r"^[0-9A-F]{6}$")
 
 
@@ -172,7 +172,7 @@ def extract_code(username):
     if not isinstance(username, str) or not username.strip():
         return None
     raw = username.strip().upper()
-    # Forcer l'extraction du code 60DDE0 pour toute variante contenant 60DDE0 (ex: YAPO/60DDEO)
+    # Unification de toute saisie contenant 60DDE0 vers le code propre 60DDE0
     if "60DDE0" in raw:
         return "60DDE0"
     parts = [p.strip() for p in re.split(r"[/\-\s]+", raw) if p.strip()]
@@ -193,7 +193,7 @@ if not enr_df.empty:
     enr_df["role"] = enr_df["role"].fillna("")
     
     # -------------------------------------------------------------------------
-    # APPLICATION DES MISES À JOUR DES SUPERVISEURS PAR ZONE
+    # FORÇAGE DES SUPERVISEURS OFFICIELS PAR ZONE
     # -------------------------------------------------------------------------
     supervisor_overrides = {
         "KOFFI ANGE MICKAEL": {"role": "superviseur", "ville": "Yamoussoukro", "equipe": "Yamoussoukro"},
@@ -230,7 +230,7 @@ else:
     df["nom_prenoms"] = df["_username_brut"]
 
 # -------------------------------------------------------------------------
-# ASSOCIATION FORCÉE DU CODE 60DDE0 (YAPO AYEKOE BIENVENUE)
+# ASSOCIATION EXPLICITE DE 60DDE0 (YAPO AYEKOE BIENVENUE)
 # -------------------------------------------------------------------------
 mask_yapo = df["code_agent"] == "60DDE0"
 if mask_yapo.any():
@@ -283,7 +283,6 @@ effectif_deploye = len(codes_matches)
 effectif_non_actif = max(effectif_prevu - effectif_deploye, 0)
 nb_non_enrolles = len(codes_actifs_non_enrolles)
 
-# Remplacement de "Meilleure ville" par "Meilleure équipe"
 top_equipe = fdf["equipe"].value_counts().idxmax() if not fdf["equipe"].dropna().empty else "—"
 agent_today = fdf.groupby(["code_agent_display", "nom_prenoms"]).size()
 best_agent_label = "—"
@@ -343,7 +342,7 @@ fig_line.update_xaxes(title=None)
 plot(fig_line)
 
 # =============================================================================
-# ACTIVATIONS PAR ÉQUIPE (aujourd'hui) — Suppression du graph par ville
+# ACTIVATIONS PAR ÉQUIPE (aujourd'hui)
 # =============================================================================
 st.markdown("<h4 class='section-title'>Activations par équipe (aujourd'hui)</h4>", unsafe_allow_html=True)
 equipe_counts = fdf["equipe"].value_counts().reset_index()
@@ -370,7 +369,6 @@ if not superviseurs_df.empty:
         s_code = sup_row.get("code_parrainage", "—")
         s_team = sup_row.get("equipe", "Non assignée")
         
-        # Le total du superviseur correspond au total des activations de son équipe
         team_activations = len(fdf[fdf["equipe"] == s_team]) if s_team != "Non assignée" else 0
         
         sup_perf_list.append({
