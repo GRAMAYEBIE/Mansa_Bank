@@ -1,11 +1,5 @@
 """
-Vue Superviseur — version simplifiée du dashboard, verrouillée sur "Aujourd'hui".
-Pas de filtre ville/équipe/opérateur/période : juste ce qui se passe AUJOURD'HUI,
-pour que chaque superviseur voie l'activité de son équipe en direct, sans manipulation.
-
-Cette page réutilise exactement la même logique de chargement/nettoyage/matching
-que app.py (dédoublonnage, extraction de code, jointure enrôlement) pour garantir
-des chiffres strictement identiques entre les deux vues.
+Vue Superviseur — avec sélecteur Aujourd'hui / Hier pour auditer les activations.
 """
 
 import unicodedata
@@ -84,13 +78,21 @@ def to_local(ts):
 st_autorefresh(interval=config.AUTO_RELOAD_MS, key="auto_reload_sup")
 
 with st.sidebar:
-    st.markdown("### ⚡ Contrôles")
+    st.markdown("### ⚡ Contrôles & Période")
+    
+    # --- SÉLECTEUR DE PÉRIODE (Aujourd'hui / Hier) ---
+    periode_selection = st.radio(
+        "Afficher l'activité de :",
+        options=["Aujourd'hui", "Hier"],
+        index=0,
+        help="Permet de basculer entre la journée en cours et la veille (très utile tard le soir ou la nuit)."
+    )
+
     if st.button("🔄 Forcer le rafraîchissement", use_container_width=True):
         st.cache_data.clear()
         st.session_state["force_refresh_sup"] = True
     else:
         st.session_state.setdefault("force_refresh_sup", False)
-    st.caption("Cette page affiche uniquement l'activité d'AUJOURD'HUI — aucun autre filtre.")
 
 FORCE = st.session_state.get("force_refresh_sup", False)
 
@@ -172,7 +174,6 @@ def extract_code(username):
     if not isinstance(username, str) or not username.strip():
         return None
     raw = username.strip().upper()
-    # Unification de toute saisie contenant 60DDE0 vers le code propre 60DDE0
     if "60DDE0" in raw:
         return "60DDE0"
     parts = [p.strip() for p in re.split(r"[/\-\s]+", raw) if p.strip()]
@@ -192,9 +193,7 @@ if not enr_df.empty:
     enr_df["code_parrainage"] = enr_df["code_parrainage"].astype(str).str.strip().str.upper()
     enr_df["role"] = enr_df["role"].fillna("")
     
-    # -------------------------------------------------------------------------
-    # FORÇAGE DES SUPERVISEURS OFFICIELS PAR ZONE
-    # -------------------------------------------------------------------------
+    # --- FORÇAGE DES SUPERVISEURS OFFICIELS PAR ZONE ---
     supervisor_overrides = {
         "KOFFI ANGE MICKAEL": {"role": "superviseur", "ville": "Yamoussoukro", "equipe": "Yamoussoukro"},
         "KOUKOUGNON EULOGE": {"role": "superviseur", "ville": "Daloa", "equipe": "Daloa"},
@@ -229,9 +228,7 @@ else:
     df["equipe"] = "Non assignée"
     df["nom_prenoms"] = df["_username_brut"]
 
-# -------------------------------------------------------------------------
-# ASSOCIATION EXPLICITE DE 60DDE0 (YAPO AYEKOE BIENVENUE)
-# -------------------------------------------------------------------------
+# --- ASSOCIATION EXPLICITE DE 60DDE0 (YAPO AYEKOE BIENVENUE) ---
 mask_yapo = df["code_agent"] == "60DDE0"
 if mask_yapo.any():
     df.loc[mask_yapo, "nom_prenoms"] = "YAPO AYEKOE BIENVENUE"
@@ -240,7 +237,7 @@ if mask_yapo.any():
 
 df["code_agent_display"] = df["code_agent"].fillna("Non identifié")
 
-# --- Dédoublonnage : 1 numéro client = 1 activation (règle déplafonnement=Oui prioritaire) ---
+# --- Dédoublonnage : 1 numéro client = 1 activation ---
 if "client_telephone" in df.columns:
     df = df.sort_values("date")
     has_phone = df["client_telephone"].astype(str).str.strip().replace({"None": "", "nan": ""}) != ""
@@ -257,22 +254,25 @@ if "client_telephone" in df.columns:
 
 now_utc = datetime.now(timezone.utc)
 today = now_utc.date()
+hier = today - timedelta(days=1)
+
+# Détermination de la date cible en fonction du choix de l'utilisateur
+target_date = today if periode_selection == "Aujourd'hui" else hier
+
 last_submission = df["date"].max() if pd.notna(df["date"].max()) else None
 is_stale = last_submission is not None and (now_utc - last_submission).total_seconds() / 3600 > config.STALE_DATA_HOURS
 
-# =============================================================================
-# TOUT EST VERROUILLÉ SUR AUJOURD'HUI — aucun filtre ville/équipe/opérateur/période
-# =============================================================================
-fdf = df[df["date_only"] == today]
+# Filtrage sur la date sélectionnée
+fdf = df[df["date_only"] == target_date]
 
-badge = "<span class='live-badge'>● LIVE</span>"
-st.markdown(f"# 👥 Vue Superviseur — {today.strftime('%d/%m/%Y')} {badge}", unsafe_allow_html=True)
-st.caption(f"Actualisé à {to_local(last_fetch).strftime('%H:%M')} · Cette page ne montre QUE l'activité du jour.")
-if is_stale:
+badge = "<span class='live-badge'>● LIVE</span>" if periode_selection == "Aujourd'hui" else "<span class='live-badge' style='background:rgba(107,114,128,0.1); color:#6B7280; border-color:#6B7280;'>ARCHIVE HIER</span>"
+st.markdown(f"# 👥 Vue Superviseur — {target_date.strftime('%d/%m/%Y')} {badge}", unsafe_allow_html=True)
+st.caption(f"Actualisé à {to_local(last_fetch).strftime('%H:%M')} · Affichage de l'activité du : **{periode_selection.lower()}**.")
+if is_stale and periode_selection == "Aujourd'hui":
     st.warning("Aucune nouvelle activation récente — vérifie que la collecte terrain fonctionne.")
 
 # =============================================================================
-# EFFECTIFS AVD DU JOUR
+# EFFECTIFS AVD DE LA JOURNÉE SÉLECTIONNÉE
 # =============================================================================
 codes_actifs = set(fdf["code_agent"].dropna().unique())
 codes_matches = codes_actifs & codes_enrolles_commerciaux
@@ -290,7 +290,7 @@ if not agent_today.empty:
     (best_code, best_name), best_count = agent_today.idxmax(), int(agent_today.max())
     best_agent_label = f"{best_name} ({best_code}) — {best_count}"
 
-st.markdown("<h3 class='section-title'>Effectifs AVD</h3>", unsafe_allow_html=True)
+st.markdown(f"<h3 class='section-title'>Effectifs AVD ({periode_selection.lower()})</h3>", unsafe_allow_html=True)
 c1, c2, c3, c4, c5 = st.columns(5)
 c1.metric("AVD prévu", effectif_prevu)
 c2.metric("AVD déployé", effectif_deploye)
@@ -301,7 +301,7 @@ c5.metric("AVD non enrôlé actif", nb_non_enrolles)
 c6, c7, c8 = st.columns(3)
 c6.metric("Meilleure équipe", top_equipe)
 c7.metric("Meilleur agent", best_agent_label)
-c8.metric("Activations aujourd'hui", len(fdf))
+c8.metric(f"Activations ({periode_selection.lower()})", len(fdf))
 
 # =============================================================================
 # OBJECTIF MENSUEL (jauge uniquement)
@@ -332,7 +332,7 @@ fig_gauge = go.Figure(go.Indicator(
 plot(fig_gauge, height=280)
 
 # =============================================================================
-# ÉVOLUTION DES ACTIVITÉS (contexte, depuis le 15 août jusqu'à aujourd'hui)
+# ÉVOLUTION DES ACTIVITÉS (contexte global)
 # =============================================================================
 st.markdown("<h3 class='section-title'>Évolution des activités</h3>", unsafe_allow_html=True)
 daily = df.groupby("date_only").size().reset_index(name="activations")
@@ -342,9 +342,9 @@ fig_line.update_xaxes(title=None)
 plot(fig_line)
 
 # =============================================================================
-# ACTIVATIONS PAR ÉQUIPE (aujourd'hui)
+# ACTIVATIONS PAR ÉQUIPE
 # =============================================================================
-st.markdown("<h4 class='section-title'>Activations par équipe (aujourd'hui)</h4>", unsafe_allow_html=True)
+st.markdown(f"<h4 class='section-title'>Activations par équipe ({periode_selection.lower()})</h4>", unsafe_allow_html=True)
 equipe_counts = fdf["equipe"].value_counts().reset_index()
 equipe_counts.columns = ["equipe", "count"]
 fig_equipe = px.bar(equipe_counts.sort_values("count"), x="count", y="equipe", orientation="h", text="count")
@@ -352,16 +352,16 @@ fig_equipe.update_traces(marker_color=T["secondary"], textposition="outside")
 fig_equipe.update_yaxes(title=None)
 plot(fig_equipe, height=340)
 st.dataframe(
-    equipe_counts.rename(columns={"equipe": "Équipe", "count": "Activations (aujourd'hui)"}).sort_values(
-        "Activations (aujourd'hui)", ascending=False
+    equipe_counts.rename(columns={"equipe": "Équipe", "count": f"Activations ({periode_selection.lower()})"}).sort_values(
+        f"Activations ({periode_selection.lower()})", ascending=False
     ),
     use_container_width=True, hide_index=True,
 )
 
 # =============================================================================
-# PERFORMANCES / ACTIVATIONS DES SUPERVISEURS (Aujourd'hui)
+# PERFORMANCES DES SUPERVISEURS
 # =============================================================================
-st.markdown("<h3 class='section-title'>Performances des Superviseurs (Aujourd'hui)</h3>", unsafe_allow_html=True)
+st.markdown(f"<h3 class='section-title'>Performances des Superviseurs ({periode_selection})</h3>", unsafe_allow_html=True)
 if not superviseurs_df.empty:
     sup_perf_list = []
     for _, sup_row in superviseurs_df.iterrows():
@@ -375,17 +375,17 @@ if not superviseurs_df.empty:
             "Code parrainage": s_code,
             "Nom & Prénoms": s_name,
             "Équipe": s_team,
-            "Activations (Aujourd'hui)": team_activations
+            f"Activations ({periode_selection})": team_activations
         })
-    df_sup_perf = pd.DataFrame(sup_perf_list).sort_values("Activations (Aujourd'hui)", ascending=False)
+    df_sup_perf = pd.DataFrame(sup_perf_list).sort_values(f"Activations ({periode_selection})", ascending=False)
     st.dataframe(df_sup_perf, use_container_width=True, hide_index=True)
 else:
     st.caption("Aucun superviseur trouvé dans le référentiel d'enrôlement.")
 
 # =============================================================================
-# TOP 5 MEILLEURS AGENTS (aujourd'hui)
+# TOP 5 MEILLEURS AGENTS
 # =============================================================================
-st.markdown("<h3 class='section-title'>Top 5 meilleurs agents (aujourd'hui)</h3>", unsafe_allow_html=True)
+st.markdown(f"<h3 class='section-title'>Top 5 meilleurs agents ({periode_selection.lower()})</h3>", unsafe_allow_html=True)
 top5 = (
     fdf.groupby(["code_agent_display", "nom_prenoms"]).size().reset_index(name="Activations")
     .sort_values("Activations", ascending=False).head(5)
@@ -406,10 +406,10 @@ if not top5.empty:
                 unsafe_allow_html=True,
             )
 else:
-    st.caption("Aucune activation enregistrée aujourd'hui pour le moment.")
+    st.caption(f"Aucune activation enregistrée pour {periode_selection.lower()}.")
 
 # =============================================================================
-# RÉPARTITION PAR ÉQUIPE & SUIVI DES SUPERVISEURS (aujourd'hui)
+# RÉPARTITION PAR ÉQUIPE & DÉTAILS DES AVD
 # =============================================================================
 st.markdown("<h3 class='section-title'>Répartition par équipe & détails des AVD</h3>", unsafe_allow_html=True)
 
@@ -428,7 +428,7 @@ for team in equipes_ordered:
 
     st.markdown(
         f"<div class='team-header'>🏷️ Équipe {team} — Superviseur : {sup_name} ({sup_code}) — "
-        f"{total_team} activation(s) aujourd'hui</div>",
+        f"{total_team} activation(s) ({periode_selection.lower()})</div>",
         unsafe_allow_html=True,
     )
     st.dataframe(
@@ -436,4 +436,4 @@ for team in equipes_ordered:
         use_container_width=True, hide_index=True,
     )
 
-st.caption("Vue Superviseur — se rafraîchit automatiquement. Pour l'analyse détaillée et les filtres avancés, voir la page principale.")
+st.caption("Vue Superviseur — sélecteur de période actif.")
