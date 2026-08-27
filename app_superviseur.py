@@ -1,5 +1,5 @@
 """
-Vue Superviseur — avec correspondance par fallback direct sur le code parrainage.
+Vue Superviseur — avec normalisation intelligente des codes (O vs 0) et association forcée YAPO.
 """
 
 import unicodedata
@@ -165,7 +165,7 @@ agent_col = next(
     None,
 )
 
-# --- Extraction robuste du code parrainage ---
+# --- Extraction et normalisation intelligente (Gestion des O et des 0) ---
 CODE_PATTERN = re.compile(r"^[0-9A-F]{6}$")
 
 
@@ -173,13 +173,18 @@ def extract_code(username):
     if not isinstance(username, str) or not username.strip():
         return None
     raw = username.strip().upper()
-    if "60DDE0" in raw:
+    
+    # Correction automatique de la confusion O / 0 fréquente sur les codes parrainage (ex: 60DDEO -> 60DDE0)
+    raw_normalized = raw.replace("O", "0") if "60DDE" in raw.replace("O", "0") else raw
+    if "60DDE0" in raw_normalized:
         return "60DDE0"
-    parts = [p.strip() for p in re.split(r"[/\-\s]+", raw) if p.strip()]
+        
+    parts = [p.strip() for p in re.split(r"[/\-\s]+", raw_normalized) if p.strip()]
     candidates = [p for p in parts if CODE_PATTERN.match(p)]
     if candidates:
         return candidates[-1]
-    fallback_matches = re.findall(r"[0-9A-F]{6}", raw)
+        
+    fallback_matches = re.findall(r"[0-9A-F]{6}", raw_normalized)
     return fallback_matches[-1] if fallback_matches else None
 
 
@@ -231,9 +236,12 @@ else:
 df.loc[df["equipe"].astype(str).str.upper().str.contains("ABENGOUROU", na=False), "equipe"] = "Abengourou"
 
 # -------------------------------------------------------------------------
-# CORRECTION EXplicite ET FORCÉE POUR YAPO AYEKOE BIENVENUE (60DDE0)
+# ASSOCIATION FORCÉE ET GLOBALE DE YAPO AYEKOE BIENVENUE (60DDE0 / 60DDEO)
 # -------------------------------------------------------------------------
-mask_yapo = (df["code_agent"] == "60DDE0") | df["_username_brut"].astype(str).str.upper().str.contains("60DDE0", na=False)
+mask_yapo = (
+    (df["code_agent"] == "60DDE0") | 
+    df["_username_brut"].astype(str).str.upper().str.contains("60DDE0|60DDEO|YAPO", na=False)
+)
 if mask_yapo.any():
     df.loc[mask_yapo, "code_agent"] = "60DDE0"
     df.loc[mask_yapo, "nom_prenoms"] = "YAPO AYEKOE BIENVENUE"
@@ -475,4 +483,4 @@ for team in equipes_ordered:
         use_container_width=True, hide_index=True,
     )
 
-st.caption("Vue Superviseur — Correction forcée et association directe de YAPO AYEKOE BIENVENUE (60DDE0).")
+st.caption("Vue Superviseur — Correction automatique O/0 et matching permanent de YAPO AYEKOE BIENVENUE.")
