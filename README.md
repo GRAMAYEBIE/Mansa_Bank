@@ -43,13 +43,19 @@ si c'est comme ça que ta question s'appelle dans Kobo).
 
 ## 4. Lancer le dashboard
 
-```bash
+``bash
 streamlit run app.py
+```
+`
+## 5. Lancer le dasboard superviseur 
+
+``bash
+streamlit run superviseur.py
 ```
 
 Ça ouvre le dashboard dans ton navigateur. Le bouton **"Forcer le
 rafraîchissement"** dans la barre latérale permet de re-télécharger tout de
-suite sans attendre les 4h.
+suite sans attendre les 30 min pour les 2 dashboard.
 
 ## Ce que le dashboard affiche
 
