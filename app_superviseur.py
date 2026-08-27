@@ -1,5 +1,5 @@
 """
-Vue Superviseur — avec correspondance automatique par code d'agent et forçage des équipes.
+Vue Superviseur — avec correspondance par fallback direct sur le code parrainage.
 """
 
 import unicodedata
@@ -165,7 +165,7 @@ agent_col = next(
     None,
 )
 
-# --- Extraction robuste du code parrainage (avec détection globale de 60DDE0) ---
+# --- Extraction robuste du code parrainage ---
 CODE_PATTERN = re.compile(r"^[0-9A-F]{6}$")
 
 
@@ -231,7 +231,7 @@ else:
 df.loc[df["equipe"].astype(str).str.upper().str.contains("ABENGOUROU", na=False), "equipe"] = "Abengourou"
 
 # -------------------------------------------------------------------------
-# CORRESPONDANCE FORCÉE AUTOMATIQUE POUR LES SAISIES MAL FORMATÉES (ex: YAPO/60DDE0)
+# CORRECTION EXplicite ET FORCÉE POUR YAPO AYEKOE BIENVENUE (60DDE0)
 # -------------------------------------------------------------------------
 mask_yapo = (df["code_agent"] == "60DDE0") | df["_username_brut"].astype(str).str.upper().str.contains("60DDE0", na=False)
 if mask_yapo.any():
@@ -475,4 +475,4 @@ for team in equipes_ordered:
         use_container_width=True, hide_index=True,
     )
 
-st.caption("Vue Superviseur — correspondance et regroupement de YAPO 60DDE0 actifs.")
+st.caption("Vue Superviseur — Correction forcée et association directe de YAPO AYEKOE BIENVENUE (60DDE0).")
