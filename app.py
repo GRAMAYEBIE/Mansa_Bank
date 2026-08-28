@@ -1,4 +1,4 @@
-﻿"""
+"""
 Dashboard temps réel — Activations Mansa Bank
 Sources : KoboToolbox (3 formulaires)
   1. AGENT TERRAIN - RAPPORT D'ACTIVATION CLIENT   (aX2Y4fgZQ8uZRsQepPaREw)
