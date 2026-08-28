@@ -1,4 +1,4 @@
-﻿$content = @'
+$content = @'
 """
 Dashboard temps réel — Activations Mansa Bank
 Sources : KoboToolbox (3 formulaires)
@@ -296,6 +296,10 @@ def extract_code(username):
     if not isinstance(username, str) or not username.strip():
         return None
     raw = username.strip().upper()
+    # Confusion fréquente en saisie manuelle : la lettre "O" tapée à la place
+    # du chiffre "0" (ex: "YAPO/60DDEO" au lieu de "60DDE0"). On normalise
+    # avant de chercher le code, pour ne rater aucune correspondance valide.
+    raw = raw.replace("O", "0")
 
     # 1. Découpage sur les séparateurs usuels (/, -, espace) — on cherche le
     #    morceau qui correspond exactement au format d'un code (6 caractères).
@@ -318,15 +322,60 @@ df["_username_brut"] = df[agent_col] if agent_col else None
 
 ROLE_SUPERVISEUR_KW = "superviseur"
 
+
+def clean_supervisor_name(raw_name):
+    """
+    Nettoie les valeurs brutes Kobo au format "nom___ville" (choix mal étiquetés)
+    et fusionne automatiquement l'ANCIEN superviseur d'une zone avec le NOUVEAU
+    officiel (config.VILLE_SUPERVISEUR_FALLBACK) — toutes les activations de
+    l'équipe reviennent alors au nouveau responsable de la zone.
+    """
+    if not isinstance(raw_name, str) or not raw_name.strip():
+        return raw_name
+    if "___" in raw_name:
+        parts = raw_name.split("___")
+        name_part = parts[0].replace("_", " ").strip().title()
+        city_part = parts[-1].replace("_", " ").replace("-", " ").strip().upper()
+        if city_part in config.VILLE_SUPERVISEUR_FALLBACK:
+            return config.VILLE_SUPERVISEUR_FALLBACK[city_part]
+        return name_part
+    return raw_name.strip()
+
+
+def clean_equipe_name(raw_equipe):
+    """
+    Normalise le nom d'équipe (espaces/underscores/tirets/casse) pour que chaque
+    zone n'apparaisse qu'une seule fois (ex: "daloa", "DALOA", "Daloa" -> "Daloa").
+    Ne fusionne PAS les équipes numérotées entre elles (Bouaké 1 reste distinct
+    de Bouaké 2).
+    """
+    if not isinstance(raw_equipe, str) or not raw_equipe.strip():
+        return raw_equipe
+    name = raw_equipe.replace("_", " ").replace("-", " ").strip()
+    name = " ".join(name.split())  # espaces multiples -> un seul
+    return name.title()
+
+
 if not enr_df.empty:
     enr_df["code_parrainage"] = enr_df["code_parrainage"].astype(str).str.strip().str.upper()
     enr_df["role"] = enr_df["role"].fillna("")
+    enr_df["nom_superviseur"] = enr_df["nom_superviseur"].apply(clean_supervisor_name)
+    enr_df["equipe"] = enr_df["equipe"].apply(clean_equipe_name)
+
+    # Correction de rôle pour les superviseurs connus dont le champ ROLE Kobo
+    # n'est pas fiable (voir config.SUPERVISOR_ROLE_OVERRIDES)
+    for _sup_name in config.SUPERVISOR_ROLE_OVERRIDES:
+        _mask = enr_df["nom_prenoms"].str.upper().str.contains(_sup_name, na=False)
+        enr_df.loc[_mask, "role"] = "superviseur"
 
     is_supervisor_role = enr_df["role"].str.lower().str.contains(ROLE_SUPERVISEUR_KW, na=False)
     commerciaux_df = enr_df[~is_supervisor_role].drop_duplicates(subset="code_parrainage", keep="last")
     superviseurs_df = enr_df[is_supervisor_role].drop_duplicates(subset="code_parrainage", keep="last")
     codes_enrolles_commerciaux = set(commerciaux_df["code_parrainage"].dropna().unique())
-    sup_code_lookup = superviseurs_df.set_index("nom_prenoms")["code_parrainage"].to_dict()
+    sup_code_lookup = {
+        str(k).strip().upper(): v
+        for k, v in superviseurs_df.set_index("nom_prenoms")["code_parrainage"].to_dict().items()
+    }
 
     df = df.merge(
         enr_df[["code_parrainage", "nom_prenoms", "nom_superviseur", "equipe", "role", "ville", "region"]]
@@ -338,6 +387,18 @@ if not enr_df.empty:
     df["region"] = df["region"].fillna("Non renseignée")
     # Code non matché (ou pas exploitable) -> on affiche le username brut tel quel, sans forcer un lien
     df["nom_prenoms"] = df["nom_prenoms"].fillna(df["_username_brut"].fillna("Inconnu"))
+
+    # Filet de sécurité : pour les agents toujours "Non assigné" après le matching
+    # par code, on déduit leur superviseur via la ville du client (table de
+    # correspondance connue), plutôt que de les laisser sans superviseur.
+    mask_non_assigne = df["nom_superviseur"] == "Non assigné"
+    fallback_sup = df.loc[mask_non_assigne, "ville_propre"].map(config.VILLE_SUPERVISEUR_FALLBACK)
+    df.loc[mask_non_assigne, "nom_superviseur"] = df.loc[mask_non_assigne, "nom_superviseur"].where(
+        fallback_sup.isna(), fallback_sup
+    )
+    df.loc[mask_non_assigne & fallback_sup.notna(), "equipe"] = df.loc[
+        mask_non_assigne & fallback_sup.notna(), "ville_propre"
+    ].str.title()
 else:
     commerciaux_df, superviseurs_df = pd.DataFrame(), pd.DataFrame()
     codes_enrolles_commerciaux, sup_code_lookup = set(), {}
@@ -691,7 +752,7 @@ if nb_non_enrolles > 0:
 st.markdown("<h3 class='section-title'>Activations & déplafonnement par AVD</h3>", unsafe_allow_html=True)
 if not fdf.empty:
     avd_deplaf = (
-        fdf.groupby(["code_agent_display", "nom_prenoms"])
+        fdf.groupby(["code_agent_display", "nom_prenoms", "equipe"])
         .agg(Activations=("submission_id", "count"), Deplafonnements=("deplafonnement", lambda s: (s == "Oui").sum()))
         .reset_index()
         .sort_values("Activations", ascending=False)
@@ -700,7 +761,7 @@ if not fdf.empty:
     taux = (avd_deplaf["Deplafonnements"] / activations_safe * 100).round(1)
     avd_deplaf["Taux déplafonnement"] = taux.astype(str) + " %"
     st.dataframe(
-        avd_deplaf.rename(columns={"code_agent_display": "Code", "nom_prenoms": "Nom & Prénoms"}),
+        avd_deplaf.rename(columns={"code_agent_display": "Code", "nom_prenoms": "Nom & Prénoms", "equipe": "Équipe"}),
         use_container_width=True, hide_index=True, height=320,
     )
 
@@ -781,7 +842,7 @@ st.markdown("<h3 class='section-title'>Transactions & Objectif mensuel</h3>", un
 month_start = today.replace(day=1)
 df_month = df[(df["date_only"] >= month_start) & (df["date_only"] <= today)]
 nb_transactions_mois = int((df_month["transaction_effectuee"] == "Oui").sum()) if "transaction_effectuee" in df.columns else 0
-objectif_mensuel = 7000
+objectif_mensuel = 25000
 
 gc1, gc2 = st.columns([1.3, 1])
 with gc1:
@@ -1093,7 +1154,7 @@ for team in equipes_ordered:
     team_df = fdf[fdf["equipe"] == team]
     total_team = len(team_df)
     sup_name = team_df["nom_superviseur"].mode().iloc[0] if not team_df["nom_superviseur"].mode().empty else "Non assigné"
-    sup_code = sup_code_lookup.get(sup_name, "—")
+    sup_code = sup_code_lookup.get(str(sup_name).strip().upper(), "—")
 
     agents_team = (
         team_df.groupby(["code_agent_display", "nom_prenoms"]).size().reset_index(name="Activations")
@@ -1223,6 +1284,7 @@ st.caption(
 )
 
 '@
-[System.IO.File]::WriteAllText((Join-Path $PSScriptRoot "app.py"), $content, [System.Text.UTF8Encoding]::new($true))
-$firstLine = Get-Content (Join-Path $PSScriptRoot "app.py") -TotalCount 1
+$targetPath = Join-Path $PSScriptRoot "app.py"
+[System.IO.File]::WriteAllText($targetPath, $content, [System.Text.UTF8Encoding]::new($true))
+$firstLine = Get-Content $targetPath -TotalCount 1
 if ($firstLine -like "*content = @*") { Write-Host "ERREUR : app.py mal ecrit !" -ForegroundColor Red } else { Write-Host "OK : app.py ecrit correctement" -ForegroundColor Green }
