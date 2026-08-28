@@ -1,4 +1,4 @@
-﻿"""
+"""
 Configuration centrale du dashboard.
 Adapte surtout la section COLUMN_MAP en fonction des vrais noms de questions
 de ton formulaire Kobo (lance `python kobo_client.py --inspect` pour les lister).
@@ -120,6 +120,28 @@ OUI_NON_ALIASES = {
 # ville" se limitent à celles-ci (le reste est regroupé sous "Autres villes").
 # Noms normalisés : MAJUSCULES, sans accents, tirets remplacés par des espaces.
 MAJOR_CITIES = ["ABIDJAN", "BOUAKE", "DALOA", "SAN PEDRO", "YAMOUSSOUKRO", "KORHOGO", "MAN"]
+
+# ---------------------------------------------------------------------------
+# Superviseur de secours par ville — utilisé UNIQUEMENT quand un agent ne peut
+# pas être matché par son code (username illisible/non enrôlé). On déduit alors
+# son superviseur via la ville du client, plutôt que de le laisser "Non assigné".
+# ⚠️ C'est une déduction, pas une donnée confirmée par l'enrôlement — à corriger
+# ici si un superviseur change de zone.
+# ---------------------------------------------------------------------------
+VILLE_SUPERVISEUR_FALLBACK = {
+    "DALOA": "Koukougnon Euloge",
+    "ABENGOUROU": "Berthe Mafine Chata",
+    "SAN PEDRO": "Bosson Kasi Jacques",
+    "YAMOUSSOUKRO": "Koffi Ange Mickael",
+}
+
+# Ces 4 personnes sont bien des superviseurs mais leur champ ROLE dans Kobo
+# n'est parfois pas rempli correctement -> on force leur rôle pour qu'ils
+# soient reconnus comme superviseurs (et non comme commerciaux) et que leur
+# propre code parrainage soit bien retrouvé dans le tableau de performance.
+SUPERVISOR_ROLE_OVERRIDES = [
+    "KOFFI ANGE MICKAEL", "KOUKOUGNON EULOGE", "BERTHE MAFINE CHATA", "BOSSON KASI JACQUES",
+]
 
 SOCIO_PRO_GROUPS = {
     "Fonctionnaire": ["fonctionnaire", "agent de l'etat", "agent de l'état", "secteur public", "salarie public", "salarié public"],
