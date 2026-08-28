@@ -1,5 +1,4 @@
-﻿$content = @'
-"""
+﻿"""
 Dashboard temps réel — Activations Mansa Bank
 Sources : KoboToolbox (3 formulaires)
   1. AGENT TERRAIN - RAPPORT D'ACTIVATION CLIENT   (aX2Y4fgZQ8uZRsQepPaREw)
@@ -1282,9 +1281,3 @@ st.caption(
     "Sources : KoboToolbox — Activation client, Supervision, Enrôlement agents. "
     "Synchro incrémentale automatique. Page rafraîchie automatiquement."
 )
-
-'@
-$targetPath = Join-Path $PSScriptRoot "app.py"
-[System.IO.File]::WriteAllText($targetPath, $content, [System.Text.UTF8Encoding]::new($true))
-$firstLine = Get-Content $targetPath -TotalCount 1
-if ($firstLine -like "*content = @*") { Write-Host "ERREUR : app.py mal ecrit !" -ForegroundColor Red } else { Write-Host "OK : app.py ecrit correctement" -ForegroundColor Green }
