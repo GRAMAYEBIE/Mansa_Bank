@@ -235,9 +235,9 @@ if not target_col:
     target_col = text_cols[0] if text_cols else df.columns[0]
 
 
+# 1. Déclarations des fonctions (au début du fichier)
 def strip_accents(s):
     return "".join(c for c in unicodedata.normalize("NFKD", s) if not unicodedata.combining(c))
-
 
 def clean_city(val):
     if pd.isna(val):
@@ -249,9 +249,7 @@ def clean_city(val):
     city = strip_accents(city).replace("-", " ").strip()
     return city if city else "Non renseigné"
 
-
 def to_major_city(city):
-    """Vcherche si l'une des 7 grandes villes est contenue dans le texte de l'agent."""
     if not isinstance(city, str):
         return "Autres villes"
     c_upper = city.upper()
@@ -261,14 +259,31 @@ def to_major_city(city):
     return "Autres villes"
 
 
-df["ville_propre"] = df[target_col].apply(clean_city)
-df["ville_groupe"] = df["ville_propre"].apply(to_major_city)
-loc_col = "ville_propre"        # utilisé pour la carte GPS (précision géographique réelle)
-loc_col_group = "ville_groupe"  # utilisé pour le filtre, le KPI et le graph "par ville"
+# 2. Exécution MISA EN CACHE (à placer DANS votre fonction @st.cache_data)
+@st.cache_data(ttl=config.REFRESH_INTERVAL_SECONDS, show_spinner="Préparation des données...")
+def load_and_prepare_data(force=False):
+    # Fetch API Kobo
+    df, last_fetch = load_data(force_refresh=force)
+    
+    # Détection de la colonne ville
+    target_col = None
+    for col in df.columns:
+        if "ville" in col.lower() or "quartier" in col.lower():
+            target_col = col
+            break
+    if not target_col:
+        text_cols = [c for c in df.columns if df[c].dtype == "object"]
+        target_col = text_cols[0] if text_cols else df.columns[0]
 
-df["date_only"] = df["date"].dt.date if "date" in df.columns else pd.NaT
-df["hour"] = df["date"].dt.hour if "date" in df.columns else 0
-df["weekday"] = df["date"].dt.day_name() if "date" in df.columns else ""
+    # Application du nettoyage (fait 1 seule fois toutes les X minutes grâce au cache)
+    df["ville_propre"] = df[target_col].apply(clean_city)
+    df["ville_groupe"] = df["ville_propre"].apply(to_major_city)
+    
+    df["date_only"] = df["date"].dt.date if "date" in df.columns else pd.NaT
+    df["hour"] = df["date"].dt.hour if "date" in df.columns else 0
+    df["weekday"] = df["date"].dt.day_name() if "date" in df.columns else ""
+
+    return df, last_fetch
 
 agent_col = next(
     (c for c in df.columns if c in ["_submitted_by", "username"] or "agent" in c.lower() or "user" in c.lower()),
@@ -316,7 +331,7 @@ def extract_code(username):
     return None
 
 
-df["code_agent"] = df[agent_col].apply(extract_code) if agent_col else None
+df["code_agent"] = df[agent_col].astype(str).str.extract(r"([A-Za-z0-9]+)", expand=False)
 df["_username_brut"] = df[agent_col] if agent_col else None
 
 ROLE_SUPERVISEUR_KW = "superviseur"
@@ -449,14 +464,13 @@ if "client_telephone" in df.columns:
             .sort_values("nb_fois", ascending=False)
         )
 
-    # Règle de dédoublonnage : on garde la soumission où déplafonnement = "Oui"
-    # (la plus récente s'il y en a plusieurs) ; à défaut, la soumission la plus récente.
-    def pick_best(group):
-        deplaf_oui = group[group["deplafonnement"] == "Oui"]
-        return deplaf_oui.iloc[-1] if not deplaf_oui.empty else group.iloc[-1]
-
+    # Règle de dédoublonnage optimisée (Vectorisée) :
+    # On privilégie "deplafonnement = Oui", puis la soumission la plus récente.
     if not df_avec_tel.empty:
-        df_avec_tel = df_avec_tel.groupby("client_telephone", group_keys=False).apply(pick_best)
+        df_avec_tel["_is_deplaf_oui"] = (df_avec_tel["deplafonnement"] == "Oui").astype(int)
+        df_avec_tel = df_avec_tel.sort_values(by=["_is_deplaf_oui", "date"], ascending=[True, True])
+        df_avec_tel = df_avec_tel.drop_duplicates(subset=["client_telephone"], keep="last").drop(columns=["_is_deplaf_oui"])
+
     df = pd.concat([df_avec_tel, df_sans_tel]).sort_values("date").reset_index(drop=True)
 
 nb_doublons_supprimes = nb_avant_dedup - len(df)
