@@ -418,7 +418,7 @@ if not enr_df.empty:
         fallback_sup.isna(), fallback_sup
     )
     df.loc[mask_non_assigne & fallback_sup.notna(), "equipe"] = df.loc[
-        mask_non_assigne & fallback_sup.notna(), "ville_propre"
+    mask_non_assigne & fallback_sup.notna(), col_ville_ref
     ].str.title()
 else:
     commerciaux_df, superviseurs_df = pd.DataFrame(), pd.DataFrame()
