@@ -406,7 +406,14 @@ if not enr_df.empty:
     # par code, on déduit leur superviseur via la ville du client (table de
     # correspondance connue), plutôt que de les laisser sans superviseur.
     mask_non_assigne = df["nom_superviseur"] == "Non assigné"
-    fallback_sup = df.loc[mask_non_assigne, "ville_propre"].map(config.VILLE_SUPERVISEUR_FALLBACK)
+  
+    col_ville_ref = "ville_propre" if "ville_propre" in df.columns else ("ville_groupe" if "ville_groupe" in df.columns else None)
+
+    if col_ville_ref:
+        fallback_sup = df.loc[mask_non_assigne, col_ville_ref].map(config.VILLE_SUPERVISEUR_FALLBACK)
+    else:
+        fallback_sup = pd.Series("Non assigné", index=df[mask_non_assigne].index)
+  
     df.loc[mask_non_assigne, "nom_superviseur"] = df.loc[mask_non_assigne, "nom_superviseur"].where(
         fallback_sup.isna(), fallback_sup
     )
