@@ -421,4 +421,4 @@ for team in equipes_ordered:
         use_container_width=True, hide_index=True,
     )
 
-st.caption("Vue Superviseur — FAIT PAR AYEBIE GRAM MESCHAC DATA_SCIENTIST/DATA_ENGINEER  - MANSA-BANK .")
+st.caption("Vue Superviseur — FAIT PAR AYEBIE GRAM MESCHAC DATA_SCIENTIST/DATA_ENGINEER  - MsC DATASCIENCE AND ANALYTICS - ACITY .")
