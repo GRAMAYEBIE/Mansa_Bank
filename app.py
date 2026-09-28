@@ -1216,8 +1216,7 @@ with st.expander("📋 Voir les données détaillées"):
     )
 
 st.caption(
+    " AYEBIE GRAM MESCHAC DATA SCIENTIST/DATA ENGINEER - MsC DATASCIENCE AND ANALYTICS ACITY  / "
     "Sources : KoboToolbox — Activation client, Supervision, Enrôlement agents. "
-    "Synchro incrémentale automatique. Page rafraîchie automatiquement.         "
-  
-    " AYEBIE GRAM MESCHAC DATA SCIENTIST/DATA ENGINEER - MsC DATASCIENCE AND ANALYTICS ACITY "
+    "Synchro incrémentale automatique. Page rafraîchie automatiquement.  "
 )
