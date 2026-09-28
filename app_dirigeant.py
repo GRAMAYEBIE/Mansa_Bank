@@ -266,9 +266,9 @@ else:
     st.caption("Aucune activation enregistrée pour cette période.")
 
 # =============================================================================
-# 5. POSITION GÉOGRAPHIQUE (Sécurisé & Cadré sur la Côte d'Ivoire)
+# 5. POSITION GÉOGRAPHIQUE (Vraie Carte Côte d'Ivoire — Sans filigrane API Key)
 # =============================================================================
-st.markdown("<h3 class='section-title'>Position géolocalisée</h3>", unsafe_allow_html=True)
+st.markdown("<h3 class='section-title'>Position géolocalisée (Côte d'Ivoire)</h3>", unsafe_allow_html=True)
 
 mode_geo = st.radio(
     "Mode d'affichage cartographique :",
@@ -293,7 +293,7 @@ GEO_CITIES_CI = {
 }
 
 CI_CENTER = {"lat": 7.539989, "lon": -5.547080}
-CI_ZOOM = 5.8
+CI_ZOOM = 6.0
 
 lat_col = next((c for c in fdf.columns if "lat" in c.lower() or "gps" in c.lower()), None)
 lon_col = next((c for c in fdf.columns if "lon" in c.lower() or "lng" in c.lower()), None)
@@ -308,10 +308,10 @@ else:
         fig_map = px.scatter_mapbox(
             map_df, lat="lat", lon="lon", color="equipe",
             zoom=CI_ZOOM, center=CI_CENTER,
-            color_discrete_sequence=[T["accent"], T["secondary"], T["primary"], T["success"]]
+            color_discrete_sequence=[T["accent"], T["secondary"], T["primary"], T["success"], "#8B5CF6"]
         )
     else:
-        # Construction de l'agrégation sécurisée
+        # Agrégation sécurisée par zone
         geo_rows = []
         counts = fdf["equipe"].value_counts()
         
@@ -332,25 +332,25 @@ else:
         if not geo_df.empty and geo_df["Activations"].sum() > 0:
             fig_map = px.scatter_mapbox(
                 geo_df, lat="lat", lon="lon", size="Activations", color="Activations",
-                hover_name="zone", size_max=35, zoom=CI_ZOOM, center=CI_CENTER,
-                color_continuous_scale=[[0, "#E5C875"], [0.5, "#C9A227"], [1.0, "#111827"]]
+                hover_name="zone", size_max=38, zoom=CI_ZOOM, center=CI_CENTER,
+                color_continuous_scale=[[0, "#E5C875"], [0.5, "#C9A227"], [1.0, "#0B1E33"]]
             )
         else:
-            # Fallback en cas de total = 0
             fig_map = px.scatter_mapbox(
                 pd.DataFrame([{"lat": CI_CENTER["lat"], "lon": CI_CENTER["lon"], "zone": "Aucune activation"}]),
                 lat="lat", lon="lon", hover_name="zone", zoom=CI_ZOOM, center=CI_CENTER
             )
 
+    # Utilisation d'OpenStreetMap (Gratuit, gratuit sans clé API et parfaitement net)
     fig_map.update_layout(
-        mapbox_style="carto-positron",
+        mapbox_style="open-street-map",
         margin=dict(t=0, b=0, l=0, r=0),
-        height=450,
+        height=480,
         paper_bgcolor=T["card_bg"]
     )
 
     st.plotly_chart(fig_map, use_container_width=True, config={"displayModeBar": False})
-    st.caption("Taille et couleur des bulles proportionnelles au nombre d'activations par ville/zone en Côte d'Ivoire.")
+    st.caption("Carte interactive centrée sur la Côte d'Ivoire (fond OpenStreetMap haute précision).")
     
     st.caption ("AYEBIE GRAM MESCHAC DATA SCIENTIST/DATA ENGINEER - MsC DATASCIENCE AND ANALYTICS ACITY")
     
