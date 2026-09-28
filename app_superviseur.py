@@ -1,5 +1,5 @@
 """
-Vue Superviseur — avec normalisation intelligente des codes (O vs 0) et association forcée YAPO.
+Vue Superviseur — version optimisée haute performance (KPI & règles métiers conservés).
 """
 
 import unicodedata
@@ -62,16 +62,15 @@ def plot(fig, height=340):
 
 _LOCAL_TZ = datetime.now().astimezone().tzinfo
 
-
 def to_local(ts):
-    if ts is None or (hasattr(pd, "isna") and pd.isna(ts)):
+    if ts is None or pd.isna(ts):
         return None
     if isinstance(ts, pd.Timestamp):
         if ts.tzinfo is None:
             ts = ts.tz_localize("UTC")
         return ts.tz_convert(_LOCAL_TZ)
     if ts.tzinfo is None:
-        ts = ts.replace(tsinfo=timezone.utc)
+        ts = ts.replace(tzinfo=timezone.utc)
     return ts.astimezone(_LOCAL_TZ)
 
 
@@ -79,7 +78,6 @@ st_autorefresh(interval=config.AUTO_RELOAD_MS, key="auto_reload_sup")
 
 with st.sidebar:
     st.markdown("### ⚡ Contrôles & Période")
-    
     periode_selection = st.radio(
         "Afficher l'activité de :",
         options=["Aujourd'hui", "Hier"],
@@ -114,7 +112,7 @@ if df_raw.empty:
     st.warning("Aucune donnée disponible.")
     st.stop()
 
-# --- Règle métier : activité comptabilisée à partir du 15 août 2026 ---
+# --- Pre-processing rapide des dates ---
 DATE_DEBUT = pd.Timestamp("2026-08-15").date()
 if "date" in df_raw.columns:
     df_raw["date"] = pd.to_datetime(df_raw["date"], errors="coerce")
@@ -124,20 +122,16 @@ if "date" in df_raw.columns:
 else:
     df = df_raw.copy()
 
-# --- Nettoyage ville ---
-target_col = None
-for col in df.columns:
-    if "ville" in col.lower() or "quartier" in col.lower():
-        target_col = col
-        break
+df["date_only"] = df["date"].dt.date if "date" in df.columns else pd.NaT
+
+# --- Nettoyage ville & Normalisation vectorisée ---
+target_col = next((c for c in df.columns if "ville" in c.lower() or "quartier" in c.lower()), None)
 if not target_col:
     text_cols = [c for c in df.columns if df[c].dtype == "object"]
     target_col = text_cols[0] if text_cols else df.columns[0]
 
-
 def strip_accents(s):
-    return "".join(c for c in unicodedata.normalize("NFKD", s) if not unicodedata.combining(c))
-
+    return "".join(c for c in unicodedata.normalize("NFKD", str(s)) if not unicodedata.combining(c))
 
 def clean_city(val):
     if pd.isna(val):
@@ -149,32 +143,21 @@ def clean_city(val):
     city = strip_accents(city).replace("-", " ").strip()
     return city if city else "Non renseigné"
 
-
-def to_major_city(city):
-    return city if city in config.MAJOR_CITIES else "Autres villes"
-
-
 df["ville_propre"] = df[target_col].apply(clean_city)
-df["ville_groupe"] = df["ville_propre"].apply(to_major_city)
-loc_col_group = "ville_groupe"
-
-df["date_only"] = df["date"].dt.date if "date" in df.columns else pd.NaT
+df["ville_groupe"] = df["ville_propre"].apply(lambda c: c if c in config.MAJOR_CITIES else "Autres villes")
 
 agent_col = next(
     (c for c in df.columns if c in ["_submitted_by", "username"] or "agent" in c.lower() or "user" in c.lower()),
     None,
 )
 
-# --- Extraction et normalisation intelligente (Gestion des O et des 0) ---
+# --- Normalisation des codes parrainage (O vs 0) ---
 CODE_PATTERN = re.compile(r"^[0-9A-F]{6}$")
-
 
 def extract_code(username):
     if not isinstance(username, str) or not username.strip():
         return None
     raw = username.strip().upper()
-    
-    # Correction automatique de la confusion O / 0 fréquente sur les codes parrainage (ex: 60DDEO -> 60DDE0)
     raw_normalized = raw.replace("O", "0") if "60DDE" in raw.replace("O", "0") else raw
     if "60DDE0" in raw_normalized:
         return "60DDE0"
@@ -187,10 +170,10 @@ def extract_code(username):
     fallback_matches = re.findall(r"[0-9A-F]{6}", raw_normalized)
     return fallback_matches[-1] if fallback_matches else None
 
-
 df["code_agent"] = df[agent_col].apply(extract_code) if agent_col else None
 df["_username_brut"] = df[agent_col] if agent_col else None
 
+# --- Traitement rapide des enrôlements ---
 ROLE_SUPERVISEUR_KW = "superviseur"
 
 if not enr_df.empty:
@@ -206,9 +189,7 @@ if not enr_df.empty:
     for sup_name, sup_info in supervisor_overrides.items():
         mask = enr_df["nom_prenoms"].str.upper().str.contains(sup_name, na=False)
         if mask.any():
-            enr_df.loc[mask, "role"] = sup_info["role"]
-            enr_df.loc[mask, "ville"] = sup_info["ville"]
-            enr_df.loc[mask, "equipe"] = sup_info["equipe"]
+            enr_df.loc[mask, ["role", "ville", "equipe"]] = [sup_info["role"], sup_info["ville"], sup_info["equipe"]]
 
     enr_df.loc[enr_df["equipe"].astype(str).str.upper().str.contains("ABENGOUROU", na=False), "equipe"] = "Abengourou"
 
@@ -235,22 +216,16 @@ else:
 
 df.loc[df["equipe"].astype(str).str.upper().str.contains("ABENGOUROU", na=False), "equipe"] = "Abengourou"
 
-# -------------------------------------------------------------------------
-# ASSOCIATION FORCÉE ET GLOBALE DE YAPO AYEKOE BIENVENUE (60DDE0 / 60DDEO)
-# -------------------------------------------------------------------------
+# --- Association forcée YAPO & Superviseurs par zone ---
 mask_yapo = (
     (df["code_agent"] == "60DDE0") | 
     df["_username_brut"].astype(str).str.upper().str.contains("60DDE0|60DDEO|YAPO", na=False)
 )
 if mask_yapo.any():
-    df.loc[mask_yapo, "code_agent"] = "60DDE0"
-    df.loc[mask_yapo, "nom_prenoms"] = "YAPO AYEKOE BIENVENUE"
-    df.loc[mask_yapo, "nom_superviseur"] = "KOFFI ANGE MICKAEL"
-    df.loc[mask_yapo, "equipe"] = "Yamoussoukro"
+    df.loc[mask_yapo, ["code_agent", "nom_prenoms", "nom_superviseur", "equipe"]] = [
+        "60DDE0", "YAPO AYEKOE BIENVENUE", "KOFFI ANGE MICKAEL", "Yamoussoukro"
+    ]
 
-# -------------------------------------------------------------------------
-# FORÇAGE STRICT DES SUPERVISEURS OFFICIELS PAR ÉQUIPE / ZONE
-# -------------------------------------------------------------------------
 team_supervisor_mapping = {
     "Daloa": "KOUKOUGNON EULOGE",
     "Abengourou": "BERTHE MAFINE CHATA",
@@ -259,30 +234,27 @@ team_supervisor_mapping = {
 }
 for equipe_cible, sup_cible in team_supervisor_mapping.items():
     mask_eq = df["equipe"].str.lower().str.contains(equipe_cible.lower(), na=False)
-    df.loc[mask_eq, "nom_superviseur"] = sup_cible
-    df.loc[mask_eq, "equipe"] = equipe_cible
+    df.loc[mask_eq, ["nom_superviseur", "equipe"]] = [sup_cible, equipe_cible]
 
 df["code_agent_display"] = df["code_agent"].fillna("Non identifié")
 
-# --- Dédoublonnage : 1 numéro client = 1 activation ---
+# --- Optimization Dédoublonnage instantané (Tri + Drop Duplicates) ---
 if "client_telephone" in df.columns:
-    df = df.sort_values("date")
-    has_phone = df["client_telephone"].astype(str).str.strip().replace({"None": "", "nan": ""}) != ""
-    df_avec_tel = df[has_phone].copy()
-    df_sans_tel = df[~has_phone].copy()
+    df["tel_clean"] = df["client_telephone"].astype(str).str.strip().replace({"None": "", "nan": ""})
+    
+    # Stratégie de priorité : privilégier "deplafonnement == Oui" puis la date la plus récente
+    df["is_deplaf"] = (df["deplafonnement"] == "Oui").astype(int) if "deplafonnement" in df.columns else 0
+    df = df.sort_values(by=["is_deplaf", "date"], ascending=[True, True])
+    
+    df_avec_tel = df[df["tel_clean"] != ""].drop_duplicates(subset=["tel_clean"], keep="last")
+    df_sans_tel = df[df["tel_clean"] == ""]
+    
+    df = pd.concat([df_avec_tel, df_sans_tel]).drop(columns=["tel_clean", "is_deplaf"]).sort_values("date").reset_index(drop=True)
 
-    def pick_best(group):
-        deplaf_oui = group[group["deplafonnement"] == "Oui"]
-        return deplaf_oui.iloc[-1] if not deplaf_oui.empty else group.iloc[-1]
-
-    if not df_avec_tel.empty:
-        df_avec_tel = df_avec_tel.groupby("client_telephone", group_keys=False).apply(pick_best)
-    df = pd.concat([df_avec_tel, df_sans_tel]).sort_values("date").reset_index(drop=True)
-
+# --- Dates cibles ---
 now_utc = datetime.now(timezone.utc)
 today = now_utc.date()
 hier = today - timedelta(days=1)
-
 target_date = today if periode_selection == "Aujourd'hui" else hier
 
 last_submission = df["date"].max() if pd.notna(df["date"].max()) else None
@@ -305,7 +277,6 @@ codes_actifs_non_enrolles = codes_actifs - set(enr_df["code_parrainage"].dropna(
 
 effectif_prevu = len(codes_enrolles_commerciaux)
 effectif_deploye = len(codes_matches)
-effectif_non_actif = max(effectif_prevu - effectif_deploye, 0)
 nb_non_enrolles = len(codes_actifs_non_enrolles)
 
 top_equipe = fdf["equipe"].value_counts().idxmax() if not fdf["equipe"].dropna().empty else "—"
@@ -328,7 +299,7 @@ c6.metric("Meilleur agent", best_agent_label)
 c7.metric(f"Activations ({periode_selection.lower()})", len(fdf))
 
 # =============================================================================
-# OBJECTIF MENSUEL (jauge uniquement)
+# OBJECTIF MENSUEL
 # =============================================================================
 st.markdown("<h3 class='section-title'>Objectif mensuel</h3>", unsafe_allow_html=True)
 month_start = today.replace(day=1)
@@ -375,6 +346,7 @@ fig_equipe = px.bar(equipe_counts.sort_values("count"), x="count", y="equipe", o
 fig_equipe.update_traces(marker_color=T["secondary"], textposition="outside")
 fig_equipe.update_yaxes(title=None)
 plot(fig_equipe, height=340)
+
 st.dataframe(
     equipe_counts.rename(columns={"equipe": "Équipe", "count": f"Activations ({periode_selection.lower()})"}).sort_values(
         f"Activations ({periode_selection.lower()})", ascending=False
@@ -428,7 +400,8 @@ for team in equipes_ordered:
     elif "yamoussoukro" in t_lower:
         sup_name = "KOFFI ANGE MICKAEL"
     else:
-        sup_name = team_df["nom_superviseur"].mode().iloc[0] if not team_df["nom_superviseur"].mode().empty else "Non assigné"
+        mode_sup = team_df["nom_superviseur"].mode()
+        sup_name = mode_sup.iloc[0] if not mode_sup.empty else "Non assigné"
 
     sup_code = sup_code_lookup.get(sup_name, "—")
 
