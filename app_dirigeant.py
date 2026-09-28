@@ -266,7 +266,7 @@ else:
     st.caption("Aucune activation enregistrée pour cette période.")
 
 # =============================================================================
-# 5. POSITION GÉOGRAPHIQUE (Cadrée sur la Côte d'Ivoire)
+# 5. POSITION GÉOGRAPHIQUE (Sécurisé & Cadré sur la Côte d'Ivoire)
 # =============================================================================
 st.markdown("<h3 class='section-title'>Position géolocalisée</h3>", unsafe_allow_html=True)
 
@@ -278,7 +278,7 @@ mode_geo = st.radio(
     label_visibility="collapsed"
 )
 
-# Coordonnées des principales villes de Côte d'Ivoire
+# Coordonnées officielles des villes de Côte d'Ivoire
 GEO_CITIES_CI = {
     "YAMOUSSOKRO": (6.827620, -5.289343),
     "DALOA": (6.877350, -6.450230),
@@ -292,53 +292,63 @@ GEO_CITIES_CI = {
     "GAGNOA": (6.131930, -5.950600),
 }
 
-# Extraction automatique des colonnes GPS
-lat_col = next((c for c in fdf.columns if "lat" in c.lower() or "gps" in c.lower()), None)
-lon_col = next((c for c in fdf.columns if "lon" in c.lower() or "lng" in c.lower()), None)
-
-# Centre et cadrage officiel Côte d'Ivoire
 CI_CENTER = {"lat": 7.539989, "lon": -5.547080}
 CI_ZOOM = 5.8
 
-if "Points GPS réels" in mode_geo and lat_col and lon_col and fdf[lat_col].notna().sum() > 0:
-    map_df = fdf[[lat_col, lon_col, "equipe"]].dropna()
-    map_df.columns = ["lat", "lon", "equipe"]
-    fig_map = px.scatter_mapbox(
-        map_df, lat="lat", lon="lon", color="equipe",
-        zoom=CI_ZOOM, center=CI_CENTER,
-        color_discrete_sequence=[T["accent"], T["secondary"], T["primary"], T["success"]]
-    )
+lat_col = next((c for c in fdf.columns if "lat" in c.lower() or "gps" in c.lower()), None)
+lon_col = next((c for c in fdf.columns if "lon" in c.lower() or "lng" in c.lower()), None)
+
+if fdf.empty:
+    st.info("Aucune activation enregistrée pour la période sélectionnée.")
 else:
-    # Agrégation par ville / zone d'activité en Côte d'Ivoire
-    geo_rows = []
-    for eq, count in fdf["equipe"].value_counts().items():
-        eq_clean = str(eq).upper().replace("-", " ").strip()
-        coords = None
-        for c_name, c_coords in GEO_CITIES_CI.items():
-            if c_name in eq_clean:
-                coords = c_coords
-                break
-        if not coords:
-            coords = GEO_CITIES_CI["YAMOUSSOKRO"] # Point central par défaut en CI
-            
-        geo_rows.append({"zone": eq, "lat": coords[0], "lon": coords[1], "Activations": count})
-    
-    geo_df = pd.DataFrame(geo_rows)
-    
-    fig_map = px.scatter_mapbox(
-        geo_df, lat="lat", lon="lon", size="Activations", color="Activations",
-        hover_name="zone", size_max=35, zoom=CI_ZOOM, center=CI_CENTER,
-        color_continuous_scale=[[0, "#E5C875"], [0.5, "#C9A227"], [1.0, "#111827"]]
+    if "Points GPS réels" in mode_geo and lat_col and lon_col and fdf[lat_col].notna().sum() > 0:
+        map_df = fdf[[lat_col, lon_col, "equipe"]].dropna()
+        map_df.columns = ["lat", "lon", "equipe"]
+        
+        fig_map = px.scatter_mapbox(
+            map_df, lat="lat", lon="lon", color="equipe",
+            zoom=CI_ZOOM, center=CI_CENTER,
+            color_discrete_sequence=[T["accent"], T["secondary"], T["primary"], T["success"]]
+        )
+    else:
+        # Construction de l'agrégation sécurisée
+        geo_rows = []
+        counts = fdf["equipe"].value_counts()
+        
+        for eq, count in counts.items():
+            eq_clean = str(eq).upper().replace("-", " ").strip()
+            coords = None
+            for c_name, c_coords in GEO_CITIES_CI.items():
+                if c_name in eq_clean:
+                    coords = c_coords
+                    break
+            if not coords:
+                coords = GEO_CITIES_CI["YAMOUSSOKRO"]
+                
+            geo_rows.append({"zone": eq, "lat": coords[0], "lon": coords[1], "Activations": int(count)})
+        
+        geo_df = pd.DataFrame(geo_rows)
+        
+        if not geo_df.empty and geo_df["Activations"].sum() > 0:
+            fig_map = px.scatter_mapbox(
+                geo_df, lat="lat", lon="lon", size="Activations", color="Activations",
+                hover_name="zone", size_max=35, zoom=CI_ZOOM, center=CI_CENTER,
+                color_continuous_scale=[[0, "#E5C875"], [0.5, "#C9A227"], [1.0, "#111827"]]
+            )
+        else:
+            # Fallback en cas de total = 0
+            fig_map = px.scatter_mapbox(
+                pd.DataFrame([{"lat": CI_CENTER["lat"], "lon": CI_CENTER["lon"], "zone": "Aucune activation"}]),
+                lat="lat", lon="lon", hover_name="zone", zoom=CI_ZOOM, center=CI_CENTER
+            )
+
+    fig_map.update_layout(
+        mapbox_style="carto-positron",
+        margin=dict(t=0, b=0, l=0, r=0),
+        height=450,
+        paper_bgcolor=T["card_bg"]
     )
 
-fig_map.update_layout(
-    mapbox_style="carto-positron",
-    margin=dict(t=0, b=0, l=0, r=0),
-    height=450,
-    paper_bgcolor=T["card_bg"]
-)
-
-st.plotly_chart(fig_map, use_container_width=True, config={"displayModeBar": False})
-st.caption("Taille et couleur des bulles proportionnelles au nombre d'activations par ville/zone (position moyenne — combine points GPS réels et estimation quand le GPS est absent).")
-
-st.caption("Vue Dirigeant Mansa Bank — FAIT PAR AYEBIE GRAM MESCHAC DATA_SCIENTIST/DATA_ENGINEER - MsC DATASCIENCE AND ANALYTICS ACITY .")
+    st.plotly_chart(fig_map, use_container_width=True, config={"displayModeBar": False})
+    st.caption("Taille et couleur des bulles proportionnelles au nombre d'activations par ville/zone en Côte d'Ivoire.")
+    
