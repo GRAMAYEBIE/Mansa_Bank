@@ -352,3 +352,5 @@ else:
     st.plotly_chart(fig_map, use_container_width=True, config={"displayModeBar": False})
     st.caption("Taille et couleur des bulles proportionnelles au nombre d'activations par ville/zone en Côte d'Ivoire.")
     
+    st.caption ("AYEBIE GRAM MESCHAC DATA SCIENTIST/DATA ENGINEER - MsC DATASCIENCE AND ANALYTICS ACITY")
+    
