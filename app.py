@@ -1,4 +1,4 @@
-﻿"""
+"""
 Dashboard temps réel — Activations Mansa Bank
 Sources : KoboToolbox (3 formulaires)
   1. AGENT TERRAIN - RAPPORT D'ACTIVATION CLIENT   (aX2Y4fgZQ8uZRsQepPaREw)
@@ -139,8 +139,7 @@ def plot(fig):
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False}, theme=None)
 
 
-# Fuseau horaire local, calculé une seule fois (évite le bug de compatibilité
-# pandas/Python où .astimezone() sans argument échoue sur certaines versions)
+# Fuseau horaire local
 _LOCAL_TZ = datetime.now().astimezone().tzinfo
 
 
@@ -158,84 +157,8 @@ def to_local(ts):
 
 
 # =============================================================================
-# AUTO-REFRESH
+# FONCTIONS UTILITAIRES POUR NETTOYAGE VILLE
 # =============================================================================
-st_autorefresh(interval=config.AUTO_RELOAD_MS, key="auto_reload")
-
-# =============================================================================
-# SIDEBAR — CONTRÔLES
-# =============================================================================
-with st.sidebar:
-    st.markdown("### ⚡ Contrôles")
-    if st.button("🔄 Forcer le rafraîchissement", use_container_width=True):
-        st.cache_data.clear()
-        st.session_state["force_refresh"] = True
-    else:
-        st.session_state.setdefault("force_refresh", False)
-    st.caption(f"Sync auto toutes les {config.REFRESH_INTERVAL_SECONDS // 3600} h")
-    st.divider()
-    st.markdown("### 🔎 Filtres")
-
-FORCE = st.session_state.get("force_refresh", False)
-
-
-# =============================================================================
-# CHARGEMENT DES 3 SOURCES DE DONNÉES
-# =============================================================================
-@st.cache_data(ttl=config.REFRESH_INTERVAL_SECONDS, show_spinner="Synchronisation des activations...")
-def get_data(force: bool):
-    return load_data(force_refresh=force)
-
-
-@st.cache_data(ttl=config.REFRESH_INTERVAL_SECONDS, show_spinner="Synchronisation de la base d'enrôlement...")
-def get_enrollment_data(force: bool):
-    return load_enrollment_data(force_refresh=force)
-
-
-@st.cache_data(ttl=config.REFRESH_INTERVAL_SECONDS, show_spinner="Synchronisation des données de supervision...")
-def get_supervisor_data(force: bool):
-    return load_supervisor_data(force_refresh=force)
-
-
-df_raw, last_fetch = get_data(FORCE)
-enr_df, enr_last_fetch = get_enrollment_data(FORCE)
-sup_df, sup_last_fetch = get_supervisor_data(FORCE)
-st.session_state["force_refresh"] = False
-
-if df_raw.empty:
-    st.warning("Aucune donnée disponible. Vérifie ta configuration Kobo.")
-    st.stop()
-
-nb_total_kobo = len(df_raw)  # nombre brut de soumissions dans Kobo, avant tout filtre/traitement
-
-# --- Règle métier : activité comptabilisée à partir du 15 août 2026 ---
-# Comparaison sur la DATE seule (pas le timestamp complet) pour éviter tout
-# souci de fuseau horaire qui pourrait exclure des activations du 1er jour.
-DATE_DEBUT = pd.Timestamp("2026-08-15").date()
-if "date" in df_raw.columns:
-    df_raw["date"] = pd.to_datetime(df_raw["date"], errors="coerce")
-    df = df_raw[df_raw["date"].dt.date >= DATE_DEBUT].copy()
-    if df.empty:
-        df = df_raw.copy()
-else:
-    df = df_raw.copy()
-
-nb_apres_debut = len(df)
-
-# =============================================================================
-# NETTOYAGE — VILLE DU CLIENT (Question 8)
-# =============================================================================
-target_col = None
-for col in df.columns:
-    if "ville" in col.lower() or "quartier" in col.lower():
-        target_col = col
-        break
-if not target_col:
-    text_cols = [c for c in df.columns if df[c].dtype == "object"]
-    target_col = text_cols[0] if text_cols else df.columns[0]
-
-
-# 1. Déclarations des fonctions (au début du fichier)
 def strip_accents(s):
     return "".join(c for c in unicodedata.normalize("NFKD", s) if not unicodedata.combining(c))
 
@@ -259,31 +182,85 @@ def to_major_city(city):
     return "Autres villes"
 
 
-# 2. Exécution MISA EN CACHE (à placer DANS votre fonction @st.cache_data)
-@st.cache_data(ttl=config.REFRESH_INTERVAL_SECONDS, show_spinner="Préparation des données...")
-def load_and_prepare_data(force=False):
-    # Fetch API Kobo
-    df, last_fetch = load_data(force_refresh=force)
-    
-    # Détection de la colonne ville
+# =============================================================================
+# AUTO-REFRESH & SIDEBAR CONTROLS
+# =============================================================================
+st_autorefresh(interval=config.AUTO_RELOAD_MS, key="auto_reload")
+
+with st.sidebar:
+    st.markdown("### ⚡ Contrôles")
+    if st.button("🔄 Forcer le rafraîchissement", use_container_width=True):
+        st.cache_data.clear()
+        st.session_state["force_refresh"] = True
+    else:
+        st.session_state.setdefault("force_refresh", False)
+    st.caption(f"Sync auto toutes les {config.REFRESH_INTERVAL_SECONDS // 3600} h")
+    st.divider()
+
+FORCE = st.session_state.get("force_refresh", False)
+
+
+# =============================================================================
+# CHARGEMENT DES DONNÉES EN CACHE
+# =============================================================================
+@st.cache_data(ttl=config.REFRESH_INTERVAL_SECONDS, show_spinner="Synchronisation des activations...")
+def get_prepared_data(force: bool):
+    df_raw, last_fetch = load_data(force_refresh=force)
+    if df_raw.empty:
+        return df_raw, last_fetch, None, None
+
+    # Nettoyage ville
     target_col = None
-    for col in df.columns:
+    for col in df_raw.columns:
         if "ville" in col.lower() or "quartier" in col.lower():
             target_col = col
             break
     if not target_col:
-        text_cols = [c for c in df.columns if df[c].dtype == "object"]
-        target_col = text_cols[0] if text_cols else df.columns[0]
+        text_cols = [c for c in df_raw.columns if df_raw[c].dtype == "object"]
+        target_col = text_cols[0] if text_cols else df_raw.columns[0]
 
-    # Application du nettoyage (fait 1 seule fois toutes les X minutes grâce au cache)
-    df["ville_propre"] = df[target_col].apply(clean_city)
-    df["ville_groupe"] = df["ville_propre"].apply(to_major_city)
+    df_raw["ville_propre"] = df_raw[target_col].apply(clean_city)
+    df_raw["ville_groupe"] = df_raw["ville_propre"].apply(to_major_city)
     
-    df["date_only"] = df["date"].dt.date if "date" in df.columns else pd.NaT
-    df["hour"] = df["date"].dt.hour if "date" in df.columns else 0
-    df["weekday"] = df["date"].dt.day_name() if "date" in df.columns else ""
+    return df_raw, last_fetch, target_col, "ville_groupe"
 
-    return df, last_fetch
+
+@st.cache_data(ttl=config.REFRESH_INTERVAL_SECONDS, show_spinner="Synchronisation de la base d'enrôlement...")
+def get_enrollment_data(force: bool):
+    return load_enrollment_data(force_refresh=force)
+
+
+@st.cache_data(ttl=config.REFRESH_INTERVAL_SECONDS, show_spinner="Synchronisation des données de supervision...")
+def get_supervisor_data(force: bool):
+    return load_supervisor_data(force_refresh=force)
+
+
+df_raw, last_fetch, loc_col, loc_col_group = get_prepared_data(FORCE)
+enr_df, enr_last_fetch = get_enrollment_data(FORCE)
+sup_df, sup_last_fetch = get_supervisor_data(FORCE)
+st.session_state["force_refresh"] = False
+
+if df_raw.empty:
+    st.warning("Aucune donnée disponible. Vérifie ta configuration Kobo.")
+    st.stop()
+
+nb_total_kobo = len(df_raw)
+
+# --- Règle métier : activité comptabilisée à partir du 15 août 2026 ---
+DATE_DEBUT = pd.Timestamp("2026-08-15").date()
+if "date" in df_raw.columns:
+    df_raw["date"] = pd.to_datetime(df_raw["date"], errors="coerce")
+    df = df_raw[df_raw["date"].dt.date >= DATE_DEBUT].copy()
+    if df.empty:
+        df = df_raw.copy()
+else:
+    df = df_raw.copy()
+
+df["date_only"] = df["date"].dt.date if "date" in df.columns else pd.NaT
+df["hour"] = df["date"].dt.hour if "date" in df.columns else 0
+df["weekday"] = df["date"].dt.day_name() if "date" in df.columns else ""
+
+nb_apres_debut = len(df)
 
 agent_col = next(
     (c for c in df.columns if c in ["_submitted_by", "username"] or "agent" in c.lower() or "user" in c.lower()),
@@ -291,39 +268,22 @@ agent_col = next(
 )
 
 # =============================================================================
-# JOINTURE AVEC LA BASE D'ENRÔLEMENT — faite AVANT le dédoublonnage, pour que le
-# rapport de doublons/fraude puisse afficher le nom de l'agent, sa ville, son équipe.
-#
-# Le code parrainage = partie du username APRÈS le "/" (ex: "David/79FE16" -> "79FE16"),
-# UNIQUEMENT si cette partie ressemble vraiment à un code (6 caractères hexadécimaux) :
-# sinon on ne tente MÊME PAS le rapprochement, le username brut est juste affiché tel quel.
+# JOINTURE AVEC LA BASE D'ENRÔLEMENT
 # =============================================================================
 CODE_PATTERN = re.compile(r"^[0-9A-F]{6}$")
 
 
 def extract_code(username):
-    """
-    Extrait le code parrainage (6 caractères alphanumériques) depuis le username
-    de l'agent, quel que soit le séparateur utilisé sur le terrain :
-    "Nom/CODE", "Nom-CODE", "Nom CODE", "CODE/Nom", "CODE-Nom", "CODE Nom", etc.
-    """
     if not isinstance(username, str) or not username.strip():
         return None
     raw = username.strip().upper()
-    # Confusion fréquente en saisie manuelle : la lettre "O" tapée à la place
-    # du chiffre "0" (ex: "YAPO/60DDEO" au lieu de "60DDE0"). On normalise
-    # avant de chercher le code, pour ne rater aucune correspondance valide.
     raw = raw.replace("O", "0")
 
-    # 1. Découpage sur les séparateurs usuels (/, -, espace) — on cherche le
-    #    morceau qui correspond exactement au format d'un code (6 caractères).
     parts = [p.strip() for p in re.split(r"[/\-\s]+", raw) if p.strip()]
     candidates = [p for p in parts if CODE_PATTERN.match(p)]
     if candidates:
         return candidates[-1]
 
-    # 2. Repli : pas de séparateur exploitable -> on cherche un bloc de 6
-    #    caractères alphanumériques n'importe où dans la chaîne.
     fallback_matches = re.findall(r"[0-9A-F]{6}", raw)
     if fallback_matches:
         return fallback_matches[-1]
@@ -338,12 +298,6 @@ ROLE_SUPERVISEUR_KW = "superviseur"
 
 
 def clean_supervisor_name(raw_name):
-    """
-    Nettoie les valeurs brutes Kobo au format "nom___ville" (choix mal étiquetés)
-    et fusionne automatiquement l'ANCIEN superviseur d'une zone avec le NOUVEAU
-    officiel (config.VILLE_SUPERVISEUR_FALLBACK) — toutes les activations de
-    l'équipe reviennent alors au nouveau responsable de la zone.
-    """
     if not isinstance(raw_name, str) or not raw_name.strip():
         return raw_name
     if "___" in raw_name:
@@ -357,16 +311,10 @@ def clean_supervisor_name(raw_name):
 
 
 def clean_equipe_name(raw_equipe):
-    """
-    Normalise le nom d'équipe (espaces/underscores/tirets/casse) pour que chaque
-    zone n'apparaisse qu'une seule fois (ex: "daloa", "DALOA", "Daloa" -> "Daloa").
-    Ne fusionne PAS les équipes numérotées entre elles (Bouaké 1 reste distinct
-    de Bouaké 2).
-    """
     if not isinstance(raw_equipe, str) or not raw_equipe.strip():
         return raw_equipe
     name = raw_equipe.replace("_", " ").replace("-", " ").strip()
-    name = " ".join(name.split())  # espaces multiples -> un seul
+    name = " ".join(name.split())
     return name.title()
 
 
@@ -376,8 +324,6 @@ if not enr_df.empty:
     enr_df["nom_superviseur"] = enr_df["nom_superviseur"].apply(clean_supervisor_name)
     enr_df["equipe"] = enr_df["equipe"].apply(clean_equipe_name)
 
-    # Correction de rôle pour les superviseurs connus dont le champ ROLE Kobo
-    # n'est pas fiable (voir config.SUPERVISOR_ROLE_OVERRIDES)
     for _sup_name in config.SUPERVISOR_ROLE_OVERRIDES:
         _mask = enr_df["nom_prenoms"].str.upper().str.contains(_sup_name, na=False)
         enr_df.loc[_mask, "role"] = "superviseur"
@@ -399,26 +345,21 @@ if not enr_df.empty:
     df["nom_superviseur"] = df["nom_superviseur"].fillna("Non assigné")
     df["equipe"] = df["equipe"].fillna("Non assignée")
     df["region"] = df["region"].fillna("Non renseignée")
-    # Code non matché (ou pas exploitable) -> on affiche le username brut tel quel, sans forcer un lien
     df["nom_prenoms"] = df["nom_prenoms"].fillna(df["_username_brut"].fillna("Inconnu"))
 
-    # Filet de sécurité : pour les agents toujours "Non assigné" après le matching
-    # par code, on déduit leur superviseur via la ville du client (table de
-    # correspondance connue), plutôt que de les laisser sans superviseur.
     mask_non_assigne = df["nom_superviseur"] == "Non assigné"
-  
     col_ville_ref = "ville_propre" if "ville_propre" in df.columns else ("ville_groupe" if "ville_groupe" in df.columns else None)
 
     if col_ville_ref:
         fallback_sup = df.loc[mask_non_assigne, col_ville_ref].map(config.VILLE_SUPERVISEUR_FALLBACK)
     else:
         fallback_sup = pd.Series("Non assigné", index=df[mask_non_assigne].index)
-  
+
     df.loc[mask_non_assigne, "nom_superviseur"] = df.loc[mask_non_assigne, "nom_superviseur"].where(
         fallback_sup.isna(), fallback_sup
     )
     df.loc[mask_non_assigne & fallback_sup.notna(), "equipe"] = df.loc[
-    mask_non_assigne & fallback_sup.notna(), col_ville_ref
+        mask_non_assigne & fallback_sup.notna(), col_ville_ref
     ].str.title()
 else:
     commerciaux_df, superviseurs_df = pd.DataFrame(), pd.DataFrame()
@@ -430,17 +371,10 @@ else:
     df["region"] = "Non renseignée"
     df["role"] = None
 
-# Colonne d'affichage sûre : "code_agent" reste None pour les codes non identifiés
-# (utilisé pour les vrais calculs de correspondance avec l'enrôlement), mais pour
-# TOUS les tableaux groupés par agent, on utilise cette version qui ne fait jamais
-# disparaître silencieusement une ligne (pandas groupby ignore les None par défaut).
 df["code_agent_display"] = df["code_agent"].fillna("Non identifié")
 
 # =============================================================================
-# DOUBLONS & FRAUDE — un client (numéro de téléphone) = une activation.
-# Capturé AVANT dédoublonnage, avec le nom/ville/équipe de chaque agent impliqué.
-#   - Doublon  : le même numéro apparaît plus d'une fois.
-#   - Fraude   : le même numéro apparaît plus de deux fois (signal fort à vérifier).
+# DOUBLONS & FRAUDE POTENTIELLE
 # =============================================================================
 nb_avant_dedup = len(df)
 doublons_detail = pd.DataFrame()
@@ -471,8 +405,6 @@ if "client_telephone" in df.columns:
             .sort_values("nb_fois", ascending=False)
         )
 
-    # Règle de dédoublonnage optimisée (Vectorisée) :
-    # On privilégie "deplafonnement = Oui", puis la soumission la plus récente.
     if not df_avec_tel.empty:
         df_avec_tel["_is_deplaf_oui"] = (df_avec_tel["deplafonnement"] == "Oui").astype(int)
         df_avec_tel = df_avec_tel.sort_values(by=["_is_deplaf_oui", "date"], ascending=[True, True])
@@ -483,9 +415,7 @@ if "client_telephone" in df.columns:
 nb_doublons_supprimes = nb_avant_dedup - len(df)
 
 # =============================================================================
-# GÉOLOCALISATION (zone réelle d'activation Q9, sinon repli approximatif autour d'Abidjan)
-# On distingue les points GPS RÉELS (_has_real_geo) des points approximatifs,
-# pour ne jamais afficher un point simulé comme si c'était une position réelle.
+# GÉOLOCALISATION
 # =============================================================================
 lat_col = next((c for c in df.columns if "lat" in c.lower()), None)
 lon_col = next((c for c in df.columns if "lon" in c.lower()), None)
@@ -543,7 +473,7 @@ with st.sidebar:
         date_range = (yesterday, yesterday)
         st.caption(f"Filtré sur le {yesterday.strftime('%d/%m/%Y')} uniquement.")
     elif quick_period == "Cette semaine":
-        week_start = today - timedelta(days=today.weekday())  # lundi de cette semaine
+        week_start = today - timedelta(days=today.weekday())
         date_range = (week_start, today)
         st.caption(f"Filtré du {week_start.strftime('%d/%m/%Y')} au {today.strftime('%d/%m/%Y')}.")
     else:
@@ -573,7 +503,6 @@ else:
 
 fdf = fdf_no_date[(fdf_no_date["date_only"] >= d_start) & (fdf_no_date["date_only"] <= d_end)]
 
-# --- Période précédente équivalente, pour comparaison automatique (peu importe le filtre actif) ---
 period_len = (d_end - d_start).days + 1
 prev_start = d_start - timedelta(days=period_len)
 prev_end = d_start - timedelta(days=1)
@@ -592,8 +521,6 @@ else:
     period_label = "sur la période"
     period_label_prev = "vs période précédente équivalente"
 
-# --- Données SUPERVISION filtrées sur la même période que le filtre actif ---
-# (utilisées par l'entonnoir de conversion et la réconciliation déclaré/confirmé)
 if not sup_df.empty:
     sup_df["date_only_sup"] = pd.to_datetime(sup_df["date"], errors="coerce").dt.date
     sup_periode = sup_df[(sup_df["date_only_sup"] >= d_start) & (sup_df["date_only_sup"] <= d_end)]
@@ -637,7 +564,7 @@ with col_status:
     st.metric("Actualisé", to_local(last_fetch).strftime("%H:%M"))
 
 # =============================================================================
-# KPIs — VUE D'ENSEMBLE (100% réactifs aux filtres actifs : période, ville, équipe, opérateur)
+# KPIs — VUE D'ENSEMBLE
 # =============================================================================
 total_global = len(df)
 total_filtre = len(fdf)
@@ -686,8 +613,7 @@ st.markdown(
 )
 
 # =============================================================================
-# EFFECTIFS AVD (Commerciaux) — réactifs à la période sélectionnée
-# "Actif" = au moins une activation sur la période filtrée (pas tout l'historique).
+# EFFECTIFS AVD (Commerciaux)
 # =============================================================================
 st.markdown(f"<h3 class='section-title'>Effectifs AVD (Commerciaux) — {period_label}</h3>", unsafe_allow_html=True)
 
@@ -715,7 +641,6 @@ if not enr_df.empty:
             f"normal pour une vue journalière si tous les agents n'ont pas encore soumis."
         )
 
-# --- AVD actifs (avec noms), sur la période sélectionnée ---
 if not commerciaux_df.empty:
     actifs_df = (
         fdf[fdf["code_agent"].isin(codes_matches)]
@@ -733,7 +658,6 @@ if not commerciaux_df.empty:
                 use_container_width=True, hide_index=True,
             )
 
-# --- AVD non actifs (avec noms), sur la période sélectionnée ---
 if not commerciaux_df.empty:
     non_actifs_df = commerciaux_df[~commerciaux_df["code_parrainage"].isin(codes_actifs)][
         ["code_parrainage", "nom_prenoms", "nom_superviseur", "equipe", "ville"]
@@ -748,7 +672,6 @@ if not commerciaux_df.empty:
                 use_container_width=True, hide_index=True,
             )
 
-# --- Agents actifs mais NON enregistrés (alerte qualité) ---
 if nb_non_enrolles > 0:
     non_enrolles_counts = (
         fdf[fdf["code_agent"].isin(codes_actifs_non_enrolles)]
@@ -767,7 +690,7 @@ if nb_non_enrolles > 0:
                      use_container_width=True, hide_index=True)
 
 # =============================================================================
-# ACTIVATIONS & DÉPLAFONNEMENT PAR AVD (base unique-client, sur la période)
+# ACTIVATIONS & DÉPLAFONNEMENT PAR AVD
 # =============================================================================
 st.markdown("<h3 class='section-title'>Activations & déplafonnement par AVD</h3>", unsafe_allow_html=True)
 if not fdf.empty:
@@ -786,9 +709,7 @@ if not fdf.empty:
     )
 
 # =============================================================================
-# RÉCAPITULATIF QUOTIDIEN PAR AVD, PAR SUPERVISEUR (tableau croisé)
-# Code, nom & prénom, ville, équipe, puis une colonne par date avec le nombre
-# d'activations de ce jour-là, trié par superviseur.
+# RÉCAPITULATIF QUOTIDIEN PAR AVD, PAR SUPERVISEUR
 # =============================================================================
 st.markdown("<h3 class='section-title'>Récapitulatif quotidien par AVD (par superviseur)</h3>", unsafe_allow_html=True)
 
@@ -806,7 +727,6 @@ if not fdf.empty:
     daily_pivot = daily_pivot.reindex(sorted(daily_pivot.columns), axis=1)
     daily_pivot["Total"] = daily_pivot.sum(axis=1)
 
-    # Colonnes de dates en format lisible (dd/mm)
     daily_pivot.columns = [c.strftime("%d/%m") if hasattr(c, "strftime") else c for c in daily_pivot.columns]
 
     daily_pivot = daily_pivot.reset_index().sort_values(
@@ -831,8 +751,7 @@ else:
     st.caption("Aucune activation sur la période sélectionnée.")
 
 # =============================================================================
-# 🚩 DOUBLONS & FRAUDE POTENTIELLE (tout l'historique depuis le 15 août,
-# indépendant du filtre période — un pattern de fraude se regarde sur la durée)
+# 🚩 DOUBLONS & FRAUDE POTENTIELLE
 # =============================================================================
 st.markdown("<h3 class='section-title'>🚩 Doublons & fraude potentielle</h3>", unsafe_allow_html=True)
 
@@ -921,7 +840,6 @@ fig_line.update_yaxes(title="Activations")
 style_fig(fig_line, height=320)
 plot(fig_line)
 
-# --- Courbe cumulée (trajectoire de croissance depuis le 15 août) ---
 daily_cumul = daily.sort_values("date_only").copy()
 daily_cumul["cumul"] = daily_cumul["activations"].cumsum()
 fig_cumul = go.Figure()
@@ -1195,8 +1113,7 @@ for team in equipes_ordered:
         st.caption("⚠ Écart interne détecté — signale-le si tu vois ce message.")
 
 # =============================================================================
-# RÉCONCILIATION & ENTONNOIR (formulaire SUPERVISION) — sur la même période que
-# le filtre global actif, pour rester cohérent avec le reste du dashboard.
+# RÉCONCILIATION & ENTONNOIR
 # =============================================================================
 if not sup_periode.empty:
     st.markdown(f"<h3 class='section-title'>Déclaré (agents) vs Confirmé (superviseurs) — {period_label}</h3>", unsafe_allow_html=True)
@@ -1240,7 +1157,7 @@ if not sup_periode.empty:
     plot(fig_funnel)
 
 # =============================================================================
-# INCIDENTS TERRAIN (formulaire SUPERVISION uniquement — les anciens sont corrigés)
+# INCIDENTS TERRAIN
 # =============================================================================
 st.markdown("<h3 class='section-title'>Incidents signalés</h3>", unsafe_allow_html=True)
 if not sup_df.empty:
