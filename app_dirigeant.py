@@ -266,7 +266,7 @@ else:
     st.caption("Aucune activation enregistrée pour cette période.")
 
 # =============================================================================
-# 5. POSITION GÉOGRAPHIQUE (Vue Boss avec Sélecteur Radio)
+# 5. POSITION GÉOGRAPHIQUE (Cadrée sur la Côte d'Ivoire)
 # =============================================================================
 st.markdown("<h3 class='section-title'>Position géolocalisée</h3>", unsafe_allow_html=True)
 
@@ -278,40 +278,48 @@ mode_geo = st.radio(
     label_visibility="collapsed"
 )
 
-# Coordonnées des villes principales
-GEO_CITIES = {
-    "YAMOUSSOKRO": (6.8276, -5.2893),
-    "DALOA": (6.8774, -6.4502),
-    "SAN-PEDRO": (4.7485, -6.6363),
-    "ABENGOUROU": (6.7297, -3.4964),
-    "ABIDJAN": (5.3599, -4.0083),
-    "BOUAKE": (7.6938, -5.0303),
+# Coordonnées des principales villes de Côte d'Ivoire
+GEO_CITIES_CI = {
+    "YAMOUSSOKRO": (6.827620, -5.289343),
+    "DALOA": (6.877350, -6.450230),
+    "SAN-PEDRO": (4.748510, -6.636300),
+    "SAN PEDRO": (4.748510, -6.636300),
+    "ABENGOUROU": (6.729720, -3.496390),
+    "ABIDJAN": (5.359952, -4.008256),
+    "BOUAKE": (7.693850, -5.030310),
+    "KORHOGO": (9.458030, -5.629610),
+    "MAN": (7.412510, -7.553830),
+    "GAGNOA": (6.131930, -5.950600),
 }
 
-# Extraction colonnes GPS Kobo si présent
+# Extraction automatique des colonnes GPS
 lat_col = next((c for c in fdf.columns if "lat" in c.lower() or "gps" in c.lower()), None)
 lon_col = next((c for c in fdf.columns if "lon" in c.lower() or "lng" in c.lower()), None)
+
+# Centre et cadrage officiel Côte d'Ivoire
+CI_CENTER = {"lat": 7.539989, "lon": -5.547080}
+CI_ZOOM = 5.8
 
 if "Points GPS réels" in mode_geo and lat_col and lon_col and fdf[lat_col].notna().sum() > 0:
     map_df = fdf[[lat_col, lon_col, "equipe"]].dropna()
     map_df.columns = ["lat", "lon", "equipe"]
     fig_map = px.scatter_mapbox(
         map_df, lat="lat", lon="lon", color="equipe",
-        zoom=6.2, center={"lat": 6.8, "lon": -5.2},
+        zoom=CI_ZOOM, center=CI_CENTER,
         color_discrete_sequence=[T["accent"], T["secondary"], T["primary"], T["success"]]
     )
 else:
-    # Agrégation par ville / équipe
+    # Agrégation par ville / zone d'activité en Côte d'Ivoire
     geo_rows = []
     for eq, count in fdf["equipe"].value_counts().items():
         eq_clean = str(eq).upper().replace("-", " ").strip()
         coords = None
-        for c_name, c_coords in GEO_CITIES.items():
+        for c_name, c_coords in GEO_CITIES_CI.items():
             if c_name in eq_clean:
                 coords = c_coords
                 break
         if not coords:
-            coords = (6.8276, -5.2893) # Centre par défaut
+            coords = GEO_CITIES_CI["YAMOUSSOKRO"] # Point central par défaut en CI
             
         geo_rows.append({"zone": eq, "lat": coords[0], "lon": coords[1], "Activations": count})
     
@@ -319,18 +327,18 @@ else:
     
     fig_map = px.scatter_mapbox(
         geo_df, lat="lat", lon="lon", size="Activations", color="Activations",
-        hover_name="zone", size_max=35, zoom=6.2, center={"lat": 6.8, "lon": -5.2},
+        hover_name="zone", size_max=35, zoom=CI_ZOOM, center=CI_CENTER,
         color_continuous_scale=[[0, "#E5C875"], [0.5, "#C9A227"], [1.0, "#111827"]]
     )
 
 fig_map.update_layout(
     mapbox_style="carto-positron",
     margin=dict(t=0, b=0, l=0, r=0),
-    height=420,
+    height=450,
     paper_bgcolor=T["card_bg"]
 )
 
 st.plotly_chart(fig_map, use_container_width=True, config={"displayModeBar": False})
 st.caption("Taille et couleur des bulles proportionnelles au nombre d'activations par ville/zone (position moyenne — combine points GPS réels et estimation quand le GPS est absent).")
 
-st.caption("Vue Dirigeant Mansa Bank — FAIT PAR AYEBIE GRAM MESCHAC DATA_SCIENTIST/DATA_ENGINEER - MANSA-BANK .")
+st.caption("Vue Dirigeant Mansa Bank — FAIT PAR AYEBIE GRAM MESCHAC DATA_SCIENTIST/DATA_ENGINEER - MsC DATASCIENCE AND ANALYTICS ACITY .")
